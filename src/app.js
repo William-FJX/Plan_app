@@ -3,10 +3,10 @@ import {
   archiveCompletedTask,
   compareTasks,
   createInitialState,
-  dueTimestamp,
   exportPayload,
   fromDateInput,
   makeId,
+  matchesTaskFilters,
   normalizeState,
   normalizeTask,
   taskDueStatus,
@@ -19,32 +19,34 @@ const taskForm = document.querySelector("#task-form");
 const projectDialog = document.querySelector("#project-dialog");
 const projectForm = document.querySelector("#project-form");
 const dataDialog = document.querySelector("#data-dialog");
+const filterDialog = document.querySelector("#filter-dialog");
+const filterForm = document.querySelector("#filter-form");
 const searchInput = document.querySelector("#search-input");
 const toastRegion = document.querySelector("#toast-region");
 
 let state = loadState();
 const ui = {
   view: "tasks",
-  taskFilter: "all",
+  filters: { projectIds: [], status: "all", from: "", to: "" },
+  timelineCursor: new Date(),
+  selectedTaskId: null,
   search: "",
   editingTaskId: null,
   editingProjectId: null,
   selectedProjectId: null,
-  taskPresetProjectIds: [],
   calendarMode: "week",
   calendarCursor: new Date(),
 };
 
 const viewDetails = {
-  tasks: ["MISSION CONTROL", "All tasks"],
-  soon: ["DEADLINE RADAR", "Due soon"],
-  calendar: ["TIME MAP", "Calendar"],
-  projects: ["LIFE MISSIONS", "Projects"],
-  notes: ["MEMORY LOG", "Quick notes"],
-  archive: ["COMPLETED RECORDS", "Archive"],
+  tasks: ["YOUR DAY, AT A GLANCE", "All tasks"],
+  calendar: ["A LITTLE ROOM FOR WHAT MATTERS", "Calendar"],
+  notes: ["THOUGHTS, AS THEY COME", "Quick notes"],
+  archive: ["FINISHED & FILED", "Archive"],
 };
 
 const iconPaths = {
+  filter: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2" fill="white"/><circle cx="15" cy="17" r="2" fill="white"/>',
   tasks: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>',
@@ -184,18 +186,9 @@ function render() {
     item.classList.toggle("is-active", item.dataset.view === ui.view);
   });
 
-  const currentTasks = activeTasks();
-  const soonCount = currentTasks.filter((task) => ["overdue", "soon"].includes(taskDueStatus(task))).length;
-  document.querySelector("#count-tasks").textContent = currentTasks.length;
-  document.querySelector("#count-soon").textContent = soonCount || "";
-  document.querySelector("#count-projects").textContent = state.projects.length;
-  document.querySelector("#count-notes").textContent = state.notes.length;
-
   const renderer = {
     tasks: renderTasksView,
-    soon: renderSoonView,
     calendar: renderCalendarView,
-    projects: renderProjectsView,
     notes: renderNotesView,
     archive: renderArchiveView,
   }[ui.view] || renderTasksView;
@@ -204,119 +197,227 @@ function render() {
   renderIcons(content);
 }
 
+function visibleTasks() {
+  return activeTasks().filter(matchesSearch)
+    .filter((task) => matchesTaskFilters(task, ui.filters)).sort(compareTasks);
+}
+
+function hasFilters() {
+  return ui.filters.projectIds.length || ui.filters.status !== "all" || ui.filters.from || ui.filters.to;
+}
+
+function filterDescription() {
+  const parts = ui.filters.projectIds.map((id) => id === "__uncategorized" ? "Uncategorized" : projectById(id)?.name).filter(Boolean);
+  if (ui.filters.status !== "all") parts.push({ overdue: "Overdue", soon: "Next 7 days", undated: "No deadline" }[ui.filters.status]);
+  if (ui.filters.from) parts.push(`From ${formatDate(ui.filters.from, { year: true })}`);
+  if (ui.filters.to) parts.push(`To ${formatDate(ui.filters.to, { year: true })}`);
+  return parts.join(" · ");
+}
+
 function renderTasksView() {
-  const tasks = activeTasks().filter(matchesSearch).sort(compareTasks);
-  const filtered = tasks.filter((task) => {
-    if (ui.taskFilter === "important") return task.important;
-    if (ui.taskFilter === "overdue") return taskDueStatus(task) === "overdue";
-    if (ui.taskFilter === "uncategorized") return task.projectIds.length === 0;
-    return true;
-  });
-  const overdue = activeTasks().filter((task) => taskDueStatus(task) === "overdue").length;
-  const soon = activeTasks().filter((task) => taskDueStatus(task) === "soon").length;
-
+  const tasks = visibleTasks();
+  const hasOverdue = activeTasks().some((task) => taskDueStatus(task) === "overdue");
+  const selectedTask = activeTasks().find((task) => task.id === ui.selectedTaskId);
+  const selectedProject = projectById(ui.selectedProjectId);
+  const selection = selectedTask?.title || selectedProject?.name || (ui.selectedProjectId === "__uncategorized" ? "Uncategorized" : "");
   return `
-    <div class="view-header">
-      <div>
-        <h2>Your next moves</h2>
-        <p>Important work stays at the front, followed by the nearest deadlines. Tasks may belong to several projects or none.</p>
-      </div>
+    ${hasOverdue ? `<div class="overdue-notice" role="status">
+      <span data-icon="clock"></span><span>You have overdue tasks.</span>
+      <button class="text-button" data-action="show-overdue">Review</button>
+    </div>` : ""}
+    ${hasFilters() ? `<div class="filter-summary"><span>${escapeHtml(filterDescription())}</span><button class="text-button" data-action="clear-filters">Clear filters</button></div>` : ""}
+    ${renderOverviewTimeline(tasks)}
+    <div class="selection-bar">
+      <span>${selection ? `Highlighting <strong>${escapeHtml(selection)}</strong>${selectedTask && !selectedTask.dueDate && !selectedTask.timeBlock.date ? " · No date assigned yet." : ""}` : "Select a project or task below to highlight it on the timeline."}</span>
+      ${selection ? '<button class="text-button" data-action="clear-selection">Clear selection</button>' : ""}
     </div>
-    <div class="dashboard-grid">
-      ${statCard("alert", "Overdue", overdue, "danger")}
-      ${statCard("clock", "Due within 7 days", soon, "warning")}
-      ${statCard("target", "Active projects", state.projects.length, "")}
-    </div>
-    <section class="panel">
-      <div class="panel-heading">
-        <h3>Task queue <span class="muted-count">${filtered.length}</span></h3>
-        <div class="filter-row">
-          ${filterChip("all", "All")}
-          ${filterChip("important", "Important")}
-          ${filterChip("overdue", "Overdue")}
-          ${filterChip("uncategorized", "Uncategorized")}
+    <div class="workspace-lists">
+      <section class="project-directory" aria-label="Project directory">
+        <div class="section-heading"><h3>Projects</h3><button class="icon-button" data-action="add-project" aria-label="New project" title="New project"><span data-icon="plus"></span></button></div>
+        <div class="directory-list">
+          ${state.projects.map((project) => `
+            <div class="directory-item ${ui.selectedProjectId === project.id ? "is-selected" : ""}">
+              <button class="project-select" data-action="select-project" data-id="${escapeHtml(project.id)}" aria-pressed="${ui.selectedProjectId === project.id}">
+                <i class="project-dot" style="background:${escapeHtml(project.color)}"></i>
+                <span><strong>${escapeHtml(project.name)}</strong><small>${project.deadline ? escapeHtml(formatDate(project.deadline, { year: true })) : "No deadline"}</small></span>
+              </button>
+              <button class="icon-button" data-action="edit-project" data-id="${escapeHtml(project.id)}" aria-label="Edit ${escapeHtml(project.name)}" title="Edit project"><span data-icon="edit"></span></button>
+            </div>
+          `).join("")}
+          <button class="project-select uncategorized ${ui.selectedProjectId === "__uncategorized" ? "is-selected" : ""}" data-action="select-project" data-id="__uncategorized" aria-pressed="${ui.selectedProjectId === "__uncategorized"}"><span data-icon="folder"></span><span>Uncategorized</span></button>
+          ${!state.projects.length ? '<p class="directory-hint">Add a project for school, applications, or anything with a few moving pieces.</p>' : ""}
         </div>
-      </div>
-      ${filtered.length ? `<div class="task-list">${filtered.map((task) => taskRow(task)).join("")}</div>` : emptyState("tasks", ui.search ? "No matching tasks" : "Your queue is clear", ui.search ? "Try a different search phrase." : "Create a task and give it a deadline when one matters.", "Create task", "add-task")}
-    </section>
+        ${selectedProject ? `<div class="project-context"><p>${escapeHtml(selectedProject.description || "Add tasks to this project as things come up.")}</p><button class="text-button" data-action="project-add-task" data-id="${escapeHtml(selectedProject.id)}"><span data-icon="plus"></span>Add task to project</button></div>` : ""}
+      </section>
+      <section class="todo-section" aria-label="To-do list">
+        <div class="section-heading"><h3>To-do list</h3><span class="quiet-label">By deadline</span></div>
+        ${tasks.length ? `<div class="task-list">${tasks.map((task) => taskRow(task)).join("")}</div>` : emptyState("tasks", hasFilters() || ui.search ? "No matching tasks" : "Room for a fresh start", hasFilters() || ui.search ? "Adjust your filters or search to see more." : "Add a task whenever you're ready.", hasFilters() || ui.search ? "" : "New task", "add-task")}
+      </section>
+    </div>
   `;
 }
 
-function renderSoonView() {
-  const tasks = activeTasks().filter(matchesSearch).sort(compareTasks);
-  const overdue = tasks.filter((task) => taskDueStatus(task) === "overdue");
-  const soon = tasks.filter((task) => taskDueStatus(task) === "soon");
-  return `
-    <div class="view-header">
-      <div>
-        <h2>Seven-day radar</h2>
-        <p>Overdue work remains visible until completed or rescheduled. Upcoming work covers today through the next seven days.</p>
+function dateOffset(dateString, start) {
+  const date = fromDateInput(dateString);
+  return Math.round((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) -
+    Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())) / 86400000);
+}
+
+function taskMatchesProject(task, projectId) {
+  return projectId === "__uncategorized" ? task.projectIds.length === 0 : task.projectIds.includes(projectId);
+}
+
+function renderOverviewTimeline(tasks) {
+  const start = weekStart(ui.timelineCursor);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 27);
+  const weeks = Array.from({ length: 4 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(date.getDate() + index * 7);
+    return `<span>${escapeHtml(formatDate(toDateInput(date)))}</span>`;
+  }).join("");
+  const today = dateOffset(todayInput(), start);
+  const todayLine = today >= 0 && today < 28 ? `<i class="today-line" style="left:${((today + 0.5) / 28) * 100}%" title="Today"></i>` : "";
+  const allProjects = [...state.projects, { id: "__uncategorized", name: "Uncategorized", color: "#a6a0af", deadline: "" }];
+  const rows = allProjects.filter((project) => {
+    if (ui.filters.projectIds.length && !ui.filters.projectIds.includes(project.id)) return false;
+    if (project.id === "__uncategorized") return tasks.some((task) => task.projectIds.length === 0);
+    if ((hasFilters() || ui.search) && !tasks.some((task) => taskMatchesProject(task, project.id))) return false;
+    return true;
+  }).map((project) => {
+    const projectTasks = tasks.filter((task) => taskMatchesProject(task, project.id));
+    const selectedTask = tasks.find((task) => task.id === ui.selectedTaskId);
+    const isSelected = ui.selectedProjectId === project.id || Boolean(selectedTask && taskMatchesProject(selectedTask, project.id));
+    const hasSelection = ui.selectedProjectId || ui.selectedTaskId;
+    const events = projectTasks.flatMap((task) => [
+      ...(task.timeBlock.date ? [{ task, date: task.timeBlock.date, kind: "block", label: task.title + " · " + formatClock(task.timeBlock.start) }] : []),
+      ...(task.dueDate ? [{ task, date: task.dueDate, kind: "due", label: task.title }] : []),
+    ]);
+    if (project.deadline) events.push({ date: project.deadline, kind: "project", label: "Project deadline" });
+    const datedEvents = events.filter((event) => {
+      event.offset = dateOffset(event.date, start);
+      return event.offset >= 0 && event.offset < 28;
+    }).sort((a, b) => a.offset - b.offset);
+    const laneEnds = [];
+    const markers = datedEvents.map((event) => {
+      // Reserve label space so nearby dates use separate lanes.
+      const markerStart = event.offset >= 22 ? event.offset - 7 : event.offset;
+      let lane = laneEnds.findIndex((lastEnd) => lastEnd <= markerStart);
+      if (lane < 0) lane = laneEnds.length;
+      laneEnds[lane] = event.offset >= 22 ? event.offset + 1 : event.offset + 7;
+      const isTaskSelected = Boolean(event.task && ui.selectedTaskId === event.task.id);
+      const action = event.task ? "select-task" : "select-project";
+      const id = event.task?.id || project.id;
+      return `<button class="overview-event ${event.kind} ${isTaskSelected ? "is-selected" : ""} ${ui.selectedTaskId && !isTaskSelected ? "is-muted" : ""}"
+        style="left:${((event.offset + 0.5) / 28) * 100}%;top:${7 + lane * 28}px"
+        data-action="${action}" data-id="${escapeHtml(id)}" data-kind="${event.kind}" data-date="${escapeHtml(event.date)}"
+        aria-pressed="${isTaskSelected || (!event.task && isSelected)}"
+        aria-label="${escapeHtml(event.label + ", " + formatDate(event.date, { year: true }))}"
+        title="${escapeHtml(event.label + " · " + formatDate(event.date, { year: true }))}">
+        <i></i><span class="${event.offset >= 22 ? "label-left" : ""}">${escapeHtml(event.label)}</span>
+      </button>`;
+    }).join("");
+    const hasDates = events.length > 0;
+    return `<div class="overview-row ${isSelected ? "is-selected" : ""} ${hasSelection && !isSelected ? "is-muted" : ""}" data-project="${escapeHtml(project.id)}">
+      <button class="overview-project-label" data-action="select-project" data-id="${escapeHtml(project.id)}" aria-pressed="${isSelected}"><i class="project-dot" style="background:${escapeHtml(project.color)}"></i><span>${escapeHtml(project.name)}</span></button>
+      <div class="overview-track" style="height:${Math.max(48, laneEnds.length * 28 + 15)}px">${todayLine}${markers}
+        ${!datedEvents.length ? `<span class="timeline-no-date">${hasDates ? "No dates in this period" : "No dates yet"}</span>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+  return `<section class="panel overview-panel" aria-label="Combined project timeline">
+    <div class="overview-toolbar">
+      <h3>Timeline</h3>
+      <div class="timeline-controls">
+        <button class="icon-button" data-action="timeline-prev" aria-label="Previous four weeks"><span data-icon="left"></span></button>
+        <span>${escapeHtml(formatDate(toDateInput(start), { year: true }))} – ${escapeHtml(formatDate(toDateInput(end), { year: true }))}</span>
+        <button class="icon-button" data-action="timeline-next" aria-label="Next four weeks"><span data-icon="right"></span></button>
+        <button class="text-button" data-action="timeline-today">Today</button>
+      </div>
+      <button class="secondary-button ${hasFilters() ? "is-active" : ""}" data-action="open-filters" aria-haspopup="dialog">
+        <span data-icon="filter"></span>${hasFilters() ? "Filters applied" : "Filter"}
+      </button>
+    </div>
+    <div class="overview-scroll" tabindex="0" aria-label="Scroll timeline horizontally">
+      <div class="overview-grid">
+        <div class="overview-axis"><span>Project</span><div>${weeks}</div></div>
+        ${rows || '<p class="timeline-empty">Your projects and dated tasks will appear here.</p>'}
       </div>
     </div>
-    ${taskSection("Overdue", overdue, "Nothing overdue", "You are caught up on missed deadlines.")}
-    <div style="height:16px"></div>
-    ${taskSection("Due in the next 7 days", soon, "No approaching deadlines", "Your next seven days are currently clear.")}
-  `;
+    <div class="timeline-legend"><span><i class="legend-dot"></i>Task deadline</span><span><i class="legend-block"></i>Time block</span><span><i class="legend-diamond"></i>Project deadline</span><span class="today-key">│ Today</span></div>
+  </section>`;
 }
 
-function taskSection(title, tasks, emptyTitle, emptyCopy) {
-  return `
-    <section class="panel">
-      <div class="panel-heading"><h3>${escapeHtml(title)} <span class="muted-count">${tasks.length}</span></h3></div>
-      ${tasks.length ? `<div class="task-list">${tasks.map((task) => taskRow(task)).join("")}</div>` : emptyState("check", emptyTitle, emptyCopy)}
-    </section>
-  `;
+function focusTimeline(dateString) {
+  if (!dateString) return;
+  const start = weekStart(ui.timelineCursor);
+  const offset = dateOffset(dateString, start);
+  if (offset < 0 || offset >= 28) ui.timelineCursor = fromDateInput(dateString);
 }
 
-function statCard(icon, label, value, className) {
-  return `
-    <article class="stat-card ${className}">
-      <span class="stat-card-label"><span data-icon="${icon}"></span>${escapeHtml(label)}</span>
-      <strong>${value}</strong>
-    </article>
-  `;
+function revealTimelineSelection() {
+  const panel = document.querySelector(".overview-panel");
+  const scroll = document.querySelector(".overview-scroll");
+  const marker = panel?.querySelector(".overview-event.is-selected, .overview-row.is-selected .overview-event");
+  if (marker && scroll) {
+    const labelWidth = panel.querySelector(".overview-project-label").getBoundingClientRect().width;
+    scroll.scrollLeft += marker.getBoundingClientRect().left - scroll.getBoundingClientRect().left
+      - labelWidth - (scroll.clientWidth - labelWidth) / 2;
+  }
+  if (panel?.getBoundingClientRect().bottom < 0) panel.scrollIntoView({ block: "start" });
 }
 
-function filterChip(value, label) {
-  return `<button class="filter-chip ${ui.taskFilter === value ? "is-active" : ""}" data-action="filter-tasks" data-filter="${value}">${label}</button>`;
+function selectTask(id, date) {
+  const task = activeTasks().find((item) => item.id === id);
+  if (!task) return;
+  ui.selectedTaskId = ui.selectedTaskId === id ? null : id;
+  ui.selectedProjectId = null;
+  if (ui.selectedTaskId) focusTimeline(date || task.dueDate || task.timeBlock.date);
+  render();
+  if (ui.selectedTaskId) revealTimelineSelection();
+}
+
+function openFilters() {
+  filterForm.elements.status.value = ui.filters.status;
+  filterForm.elements.from.value = ui.filters.from;
+  filterForm.elements.to.value = ui.filters.to;
+  document.querySelector("#filter-project-list").innerHTML = [
+    ...state.projects, { id: "__uncategorized", name: "Uncategorized", color: "#aaa3b7" },
+  ].map((project) => `<label class="project-check"><input type="checkbox" value="${escapeHtml(project.id)}" ${ui.filters.projectIds.includes(project.id) ? "checked" : ""}><span>${escapeHtml(project.name)}</span></label>`).join("");
+  filterDialog.showModal();
+}
+
+function clearFilters() {
+  ui.filters = { projectIds: [], status: "all", from: "", to: "" };
+  ui.selectedProjectId = null;
+  ui.selectedTaskId = null;
+  render();
 }
 
 function taskRow(task, options = {}) {
   const dueStatus = taskDueStatus(task);
   const dueLabel = task.dueDate
     ? `${formatDate(task.dueDate, { year: true })}${task.dueTime ? ` · ${formatClock(task.dueTime)}` : ""}`
-    : "";
+    : "No deadline";
   const projects = task.projectIds.map(projectById).filter(Boolean);
-  const completedSubtasks = task.subtasks.filter((subtask) => subtask.completed).length;
-  const subtaskPercent = task.subtasks.length ? Math.round((completedSubtasks / task.subtasks.length) * 100) : 0;
   const isArchive = Boolean(options.archive);
-
+  const isSelected = ui.selectedTaskId === task.id || Boolean(ui.selectedProjectId && taskMatchesProject(task, ui.selectedProjectId));
   return `
-    <article class="task-row ${task.important ? "is-important" : ""} ${isArchive ? "archive-row" : ""}">
-      <button class="complete-button" data-action="${isArchive ? "restore-task" : "complete-task"}" data-id="${escapeHtml(task.id)}" aria-label="${isArchive ? "Restore" : "Complete"} ${escapeHtml(task.title)}">
-        ${iconMarkup("check")}
+    <article class="task-row ${isSelected && !isArchive ? "is-selected" : ""} ${isArchive ? "archive-row" : ""}" data-task-id="${escapeHtml(task.id)}">
+      <button class="complete-button" data-action="${isArchive ? "restore-task" : "complete-task"}" data-id="${escapeHtml(task.id)}" aria-label="${isArchive ? "Restore" : "Complete"} ${escapeHtml(task.title)}">${iconMarkup("check")}</button>
+      <button class="task-copy" data-action="${isArchive ? "edit-task" : "select-task"}" data-id="${escapeHtml(task.id)}" ${isArchive ? "" : `aria-pressed="${isSelected}"`}>
+        <span class="task-title-line"><strong>${escapeHtml(task.title)}</strong></span>
+        <span class="task-meta">
+          <span class="${dueStatus === "overdue" ? "overdue-text" : ""}">${dueStatus === "overdue" ? "Overdue · " : ""}${escapeHtml(dueLabel)}</span>
+          ${projects.map((project) => `<span class="task-project-name">${escapeHtml(project.name)}</span>`).join("")}
+          ${task.subtasks.length ? `<span>${task.subtasks.filter((item) => item.completed).length}/${task.subtasks.length} steps</span>` : ""}
+          ${task.recurrence.type !== "none" ? `<span title="${escapeHtml(recurrenceLabel(task.recurrence))}">${iconMarkup("repeat")}</span>` : ""}
+        </span>
       </button>
-      <div class="task-copy">
-        <div class="task-title-line">
-          ${task.important ? '<span class="star-marker" title="Important">★</span>' : ""}
-          <strong>${escapeHtml(task.title)}</strong>
-        </div>
-        <div class="task-meta">
-          ${dueLabel ? `<span><span data-icon="clock"></span>${escapeHtml(dueLabel)}</span>` : ""}
-          ${dueStatus === "overdue" ? '<span class="status-pill overdue">Overdue</span>' : ""}
-          ${dueStatus === "soon" ? '<span class="status-pill soon">Due soon</span>' : ""}
-          ${task.location ? `<span><span data-icon="map"></span>${escapeHtml(task.location)}</span>` : ""}
-          ${task.timeBlock?.date ? `<span><span data-icon="block"></span>${escapeHtml(formatDate(task.timeBlock.date))} ${escapeHtml(formatClock(task.timeBlock.start))}–${escapeHtml(formatClock(task.timeBlock.end))}</span>` : ""}
-          ${task.recurrence?.type !== "none" ? `<span><span data-icon="repeat"></span>${escapeHtml(recurrenceLabel(task.recurrence))}</span>` : ""}
-          ${projects.map((project) => `<span class="project-pill"><i class="project-dot" style="background:${escapeHtml(project.color)}"></i>${escapeHtml(project.name)}</span>`).join("")}
-          ${!projects.length ? '<span class="project-pill">Uncategorized</span>' : ""}
-          ${task.subtasks.length ? `<span title="${completedSubtasks} of ${task.subtasks.length} subtasks"><span data-icon="subtasks"></span>${completedSubtasks}/${task.subtasks.length}<i class="subtask-progress"><span style="width:${subtaskPercent}%"></span></i></span>` : ""}
-        </div>
-      </div>
       <div class="task-actions">
         ${isArchive
-          ? `<button class="icon-button" data-action="restore-task" data-id="${escapeHtml(task.id)}" title="Restore">${iconMarkup("restore")}</button><button class="icon-button danger-button" data-action="delete-task" data-id="${escapeHtml(task.id)}" title="Delete permanently">${iconMarkup("trash")}</button>`
-          : `<button class="icon-button" data-action="edit-task" data-id="${escapeHtml(task.id)}" title="Edit">${iconMarkup("edit")}</button>`}
+          ? `<button class="icon-button" data-action="restore-task" data-id="${escapeHtml(task.id)}" aria-label="Restore ${escapeHtml(task.title)}" title="Restore">${iconMarkup("restore")}</button><button class="icon-button danger-button" data-action="delete-task" data-id="${escapeHtml(task.id)}" aria-label="Delete ${escapeHtml(task.title)} permanently" title="Delete permanently">${iconMarkup("trash")}</button>`
+          : `<button class="icon-button" data-action="edit-task" data-id="${escapeHtml(task.id)}" aria-label="Edit ${escapeHtml(task.title)}" title="Edit task">${iconMarkup("edit")}</button>`}
       </div>
     </article>
   `;
@@ -346,97 +447,6 @@ function emptyState(icon, title, copy, buttonLabel = "", action = "") {
   `;
 }
 
-function renderProjectsView() {
-  const projects = state.projects.filter((project) => {
-    if (!ui.search) return true;
-    return `${project.name} ${project.description}`.toLowerCase().includes(ui.search);
-  });
-  const selected = projectById(ui.selectedProjectId);
-
-  return `
-    <div class="view-header">
-      <div>
-        <h2>Major life missions</h2>
-        <p>Use projects for applications, school, lab, job hunting, or any larger outcome. Each project gets its own deadline and task timeline.</p>
-      </div>
-      <button class="primary-button" data-action="add-project"><span data-icon="plus"></span>New project</button>
-    </div>
-    ${projects.length
-      ? `<div class="project-grid">${projects.map(projectCard).join("")}</div>`
-      : `<section class="panel">${emptyState("layers", ui.search ? "No matching projects" : "Create your first project", ui.search ? "Try another search phrase." : "Projects keep the moving pieces of a major event together.", ui.search ? "" : "Create project", "add-project")}</section>`}
-    ${selected ? projectDetail(selected) : ""}
-  `;
-}
-
-function projectCard(project) {
-  const tasks = state.tasks.filter((task) => task.projectIds.includes(project.id));
-  const completed = tasks.filter((task) => task.completed || task.archived).length;
-  const percent = tasks.length ? Math.round((completed / tasks.length) * 100) : 0;
-  return `
-    <article class="project-card" style="--project-color:${escapeHtml(project.color)}" data-action="select-project" data-id="${escapeHtml(project.id)}">
-      <div class="project-card-top">
-        <span class="project-card-icon" data-icon="target"></span>
-        <button class="icon-button" data-action="edit-project" data-id="${escapeHtml(project.id)}" title="Edit project"><span data-icon="edit"></span></button>
-      </div>
-      <h3>${escapeHtml(project.name)}</h3>
-      <p>${escapeHtml(project.description || "No description yet.")}</p>
-      <div class="project-progress-row">
-        <span>${completed}/${tasks.length} tasks complete</span>
-        <span>${project.deadline ? formatDate(project.deadline, { year: true }) : "No deadline"}</span>
-      </div>
-      <div class="project-progress"><span style="width:${percent}%"></span></div>
-    </article>
-  `;
-}
-
-function projectDetail(project) {
-  const tasks = state.tasks
-    .filter((task) => task.projectIds.includes(project.id))
-    .sort((a, b) => {
-      const difference = dueTimestamp(a) - dueTimestamp(b);
-      if (Number.isFinite(difference) && difference !== 0) return difference;
-      return new Date(a.createdAt) - new Date(b.createdAt);
-    });
-  const milestones = tasks.map((task) => ({
-    date: task.dueDate,
-    title: task.title,
-    detail: task.completed ? "Completed" : task.dueDate ? (taskDueStatus(task) === "overdue" ? "Overdue" : "Task deadline") : "No deadline assigned",
-    completed: task.completed,
-  }));
-  if (project.deadline) milestones.push({ date: project.deadline, title: `${project.name} deadline`, detail: "Project target", projectDeadline: true });
-  milestones.sort((a, b) => {
-    if (!a.date) return 1;
-    if (!b.date) return -1;
-    return a.date.localeCompare(b.date);
-  });
-
-  return `
-    <section class="panel project-detail" style="--project-color:${escapeHtml(project.color)}">
-      <div class="project-detail-banner">
-        <div>
-          <span class="eyebrow">ACTIVE PROJECT FILE</span>
-          <h2>${escapeHtml(project.name)}</h2>
-          <p>${escapeHtml(project.description || "Add a project description to keep the outcome clear.")}</p>
-        </div>
-        <div class="project-banner-actions">
-          <button class="secondary-button" data-action="project-add-task" data-id="${escapeHtml(project.id)}"><span data-icon="plus"></span>Add task</button>
-          <button class="icon-button" data-action="edit-project" data-id="${escapeHtml(project.id)}" title="Edit project"><span data-icon="edit"></span></button>
-        </div>
-      </div>
-      <div class="timeline">
-        <div class="timeline-heading"><h3>Timeline</h3><span class="project-pill">${tasks.length} linked task${tasks.length === 1 ? "" : "s"}</span></div>
-        ${milestones.length ? milestones.map((milestone) => `
-          <div class="timeline-item">
-            <div class="timeline-date">${milestone.date ? escapeHtml(formatDate(milestone.date, { year: true })) : "Anytime"}</div>
-            <div class="timeline-rail"><span class="timeline-dot"></span></div>
-            <div class="timeline-copy"><strong>${escapeHtml(milestone.title)}</strong><small>${escapeHtml(milestone.detail)}</small></div>
-          </div>
-        `).join("") : `<div class="empty-state"><div><p>No timeline items yet. Add a task with a deadline to create the first milestone.</p></div></div>`}
-      </div>
-    </section>
-  `;
-}
-
 function renderCalendarView() {
   const periodLabel = ui.calendarMode === "week"
     ? weekLabel(ui.calendarCursor)
@@ -444,7 +454,7 @@ function renderCalendarView() {
   return `
     <div class="view-header">
       <div>
-        <h2>Calendar map</h2>
+        <h2>Your week, with a little breathing room.</h2>
         <p>Deadlines appear as all-day markers. Optional time blocks place work into a specific hour.</p>
       </div>
     </div>
@@ -529,7 +539,7 @@ function renderWeekCalendar() {
 function calendarEvent(task) {
   const project = task.projectIds.map(projectById).find(Boolean);
   const time = task.timeBlock?.start ? `${formatClock(task.timeBlock.start)} ` : "";
-  return `<button class="calendar-event" style="--event-color:${escapeHtml(project?.color || "#4aa8ff")}" data-action="edit-task" data-id="${escapeHtml(task.id)}" title="${escapeHtml(task.title)}">${escapeHtml(time + task.title)}</button>`;
+  return `<button class="calendar-event" style="--event-color:${escapeHtml(project?.color || "#9785b5")}" data-action="edit-task" data-id="${escapeHtml(task.id)}" title="${escapeHtml(task.title)}">${escapeHtml(time + task.title)}</button>`;
 }
 
 function renderMonthCalendar() {
@@ -556,7 +566,7 @@ function renderMonthCalendar() {
         <span class="month-day-number">${date.getDate()}</span>
         ${uniqueTasks.slice(0, 4).map((task) => {
           const project = task.projectIds.map(projectById).find(Boolean);
-          return `<button class="month-event" style="--event-color:${escapeHtml(project?.color || "#4aa8ff")}" data-action="edit-task" data-id="${escapeHtml(task.id)}" title="${escapeHtml(task.title)}">${escapeHtml(task.title)}</button>`;
+          return `<button class="month-event" style="--event-color:${escapeHtml(project?.color || "#9785b5")}" data-action="edit-task" data-id="${escapeHtml(task.id)}" title="${escapeHtml(task.title)}">${escapeHtml(task.title)}</button>`;
         }).join("")}
         ${uniqueTasks.length > 4 ? `<span class="task-meta">+${uniqueTasks.length - 4} more</span>` : ""}
       </div>
@@ -572,8 +582,8 @@ function renderNotesView() {
   return `
     <div class="view-header">
       <div>
-        <h2>Quick memory log</h2>
-        <p>Capture a thought without organizing it first. Every entry receives a timestamp automatically.</p>
+        <h2>A place to put your thoughts.</h2>
+        <p>Write it down. Come back to it whenever you like.</p>
       </div>
     </div>
     <div class="notes-layout">
@@ -601,12 +611,12 @@ function renderArchiveView() {
   return `
     <div class="view-header">
       <div>
-        <h2>Completed records</h2>
+        <h2>Finished &amp; filed.</h2>
         <p>Completed tasks move here automatically. Restore a task or delete it permanently when you no longer need the record.</p>
       </div>
     </div>
     <section class="panel">
-      <div class="panel-heading"><h3>Archive <span class="muted-count">${tasks.length}</span></h3></div>
+      <div class="panel-heading"><h3>Completed tasks</h3></div>
       ${tasks.length ? `<div class="task-list">${tasks.map((task) => taskRow(task, { archive: true })).join("")}</div>` : emptyState("archive", "The archive is empty", "Completed tasks will be stored here.")}
     </section>
   `;
@@ -614,14 +624,12 @@ function renderArchiveView() {
 
 function openTaskDialog(taskId = null, presetProjectIds = []) {
   ui.editingTaskId = taskId;
-  ui.taskPresetProjectIds = presetProjectIds;
   const task = taskId ? state.tasks.find((item) => item.id === taskId) : null;
   document.querySelector("#task-dialog-title").textContent = task ? "Edit task" : "Create task";
   taskForm.reset();
   taskForm.elements.repeatInterval.value = "1";
   taskForm.elements.repeatUnit.value = "week";
   taskForm.elements.title.value = task?.title || "";
-  taskForm.elements.important.checked = Boolean(task?.important);
   taskForm.elements.dueDate.value = task?.dueDate || "";
   taskForm.elements.dueTime.value = task?.dueTime || "";
   taskForm.elements.location.value = task?.location || "";
@@ -718,7 +726,6 @@ function submitTask(event) {
     location: fields.location.value.trim(),
     dueDate: fields.dueDate.value,
     dueTime: fields.dueTime.value,
-    important: fields.important.checked,
     projectIds,
     subtasks,
     recurrence: {
@@ -753,7 +760,7 @@ function openProjectDialog(projectId = null) {
   projectForm.elements.name.value = project?.name || "";
   projectForm.elements.description.value = project?.description || "";
   projectForm.elements.deadline.value = project?.deadline || "";
-  projectForm.elements.color.value = project?.color || "#4aa8ff";
+  projectForm.elements.color.value = project?.color || "#9785b5";
   document.querySelector("#delete-project-button").classList.toggle("is-hidden", !project);
   projectDialog.showModal();
   window.setTimeout(() => projectForm.elements.name.focus(), 50);
@@ -777,6 +784,8 @@ function submitProject(event) {
       : [...state.projects, project],
   };
   ui.selectedProjectId = project.id;
+  ui.selectedTaskId = null;
+  focusTimeline(project.deadline);
   projectDialog.close();
   saveState(existing ? "Project updated." : "Project created.");
 }
@@ -791,11 +800,13 @@ function deleteProject() {
     tasks: state.tasks.map((task) => ({ ...task, projectIds: task.projectIds.filter((id) => id !== project.id) })),
   };
   ui.selectedProjectId = null;
+  ui.filters.projectIds = ui.filters.projectIds.filter((id) => id !== project.id);
   projectDialog.close();
   saveState("Project deleted; linked tasks were kept.");
 }
 
 function completeTask(id) {
+  if (ui.selectedTaskId === id) ui.selectedTaskId = null;
   const result = archiveCompletedTask(state, id);
   state = result.state;
   saveState(result.repeated ? "Task completed. The next occurrence is ready." : "Task completed and archived.");
@@ -846,7 +857,7 @@ async function importBackup(file) {
     const imported = normalizeState(JSON.parse(await file.text()));
     if (!window.confirm(`Import ${imported.projects.length} projects, ${imported.tasks.length} tasks, and ${imported.notes.length} notes? This replaces the data in this browser.`)) return;
     state = imported;
-    ui.selectedProjectId = null;
+    clearFilters();
     dataDialog.close();
     saveState("Backup imported successfully.");
   } catch (error) {
@@ -887,6 +898,33 @@ document.querySelector("#repeat-unit").addEventListener("change", updateRepeatFi
 document.querySelector("#delete-project-button").addEventListener("click", deleteProject);
 taskForm.addEventListener("submit", submitTask);
 projectForm.addEventListener("submit", submitProject);
+filterForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const { from, to, status } = filterForm.elements;
+  if (from.value && to.value && from.value > to.value) {
+    showToast("The end date must be on or after the start date.");
+    return;
+  }
+  if (status.value === "undated" && (from.value || to.value)) {
+    showToast("Clear the date range to show tasks without deadlines.");
+    return;
+  }
+  ui.filters = {
+    projectIds: [...document.querySelectorAll("#filter-project-list input:checked")].map((input) => input.value),
+    status: status.value, from: from.value, to: to.value,
+  };
+  ui.selectedProjectId = null;
+  ui.selectedTaskId = null;
+  const first = visibleTasks().find((task) => task.dueDate || task.timeBlock.date);
+  if (from.value) focusTimeline(from.value);
+  else if (first) focusTimeline(first.dueDate || first.timeBlock.date);
+  filterDialog.close();
+  render();
+});
+document.querySelector("#reset-filters-button").addEventListener("click", () => {
+  clearFilters();
+  filterDialog.close();
+});
 
 searchInput.addEventListener("input", (event) => {
   ui.search = event.target.value.trim().toLowerCase();
@@ -927,8 +965,29 @@ content.addEventListener("click", (event) => {
   if (action === "complete-task") completeTask(id);
   if (action === "restore-task") restoreTask(id);
   if (action === "delete-task") deleteTask(id);
-  if (action === "filter-tasks") {
-    ui.taskFilter = actionTarget.dataset.filter;
+  if (action === "select-task") selectTask(id, actionTarget.dataset.date);
+  if (action === "open-filters") openFilters();
+  if (action === "clear-filters") clearFilters();
+  if (action === "show-overdue") {
+    clearFilters();
+    ui.search = "";
+    searchInput.value = "";
+    ui.filters.status = "overdue";
+    const first = visibleTasks()[0];
+    if (first) focusTimeline(first.dueDate);
+    render();
+  }
+  if (action === "clear-selection") {
+    ui.selectedTaskId = null;
+    ui.selectedProjectId = null;
+    render();
+  }
+  if (action === "timeline-prev" || action === "timeline-next") {
+    ui.timelineCursor.setDate(ui.timelineCursor.getDate() + (action === "timeline-prev" ? -28 : 28));
+    render();
+  }
+  if (action === "timeline-today") {
+    ui.timelineCursor = new Date();
     render();
   }
   if (action === "add-project") openProjectDialog();
@@ -937,9 +996,14 @@ content.addEventListener("click", (event) => {
     openProjectDialog(id);
   }
   if (action === "select-project") {
-    ui.selectedProjectId = id;
+    ui.selectedProjectId = ui.selectedProjectId === id ? null : id;
+    ui.selectedTaskId = null;
+    if (ui.selectedProjectId) {
+      const nearest = visibleTasks().find((task) => taskMatchesProject(task, id) && (task.dueDate || task.timeBlock.date));
+      focusTimeline(nearest?.dueDate || nearest?.timeBlock.date || projectById(id)?.deadline);
+    }
     render();
-    window.setTimeout(() => document.querySelector(".project-detail")?.scrollIntoView({ behavior: "smooth", block: "start" }), 30);
+    if (ui.selectedProjectId) revealTimelineSelection();
   }
   if (action === "project-add-task") openTaskDialog(null, [id]);
   if (action === "delete-note") {
@@ -961,7 +1025,7 @@ content.addEventListener("click", (event) => {
   }
 });
 
-[taskDialog, projectDialog, dataDialog].forEach((dialog) => {
+[taskDialog, projectDialog, dataDialog, filterDialog].forEach((dialog) => {
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) dialog.close();
   });

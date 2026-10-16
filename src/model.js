@@ -99,11 +99,25 @@ export function dueTimestamp(task) {
 }
 
 export function compareTasks(a, b) {
-  if (Boolean(a.important) !== Boolean(b.important)) return a.important ? -1 : 1;
-  const dueDifference = dueTimestamp(a) - dueTimestamp(b);
-  if (Number.isFinite(dueDifference) && dueDifference !== 0) return dueDifference;
+  const aDue = dueTimestamp(a);
+  const bDue = dueTimestamp(b);
+  if (aDue !== bDue) return aDue < bDue ? -1 : 1;
   if (a.manualOrder !== b.manualOrder) return (a.manualOrder || 0) - (b.manualOrder || 0);
   return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+}
+
+export function matchesTaskFilters(task, filters, now = new Date()) {
+  const projects = filters.projectIds || [];
+  if (projects.length && !projects.some((id) => id === "__uncategorized"
+    ? task.projectIds.length === 0
+    : task.projectIds.includes(id))) return false;
+  if (filters.status === "overdue" && taskDueStatus(task, now) !== "overdue") return false;
+  if (filters.status === "soon" && taskDueStatus(task, now) !== "soon") return false;
+  if (filters.status === "undated" && task.dueDate) return false;
+  if ((filters.from || filters.to) && !task.dueDate) return false;
+  if (filters.from && task.dueDate < filters.from) return false;
+  if (filters.to && task.dueDate > filters.to) return false;
+  return true;
 }
 
 export function taskDueStatus(task, now = new Date()) {

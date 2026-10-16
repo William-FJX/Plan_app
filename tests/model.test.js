@@ -5,16 +5,49 @@ import {
   calculateNextDate,
   compareTasks,
   createInitialState,
+  matchesTaskFilters,
   normalizeState,
   taskDueStatus,
 } from "../src/model.js";
 
-test("important tasks sort before earlier non-important deadlines", () => {
+test("deadlines sort first regardless of legacy importance flags", () => {
   const tasks = [
     { title: "Soon", important: false, dueDate: "2026-01-02", dueTime: "", manualOrder: 0, createdAt: "2026-01-01T00:00:00Z" },
     { title: "Important", important: true, dueDate: "2026-02-01", dueTime: "", manualOrder: 0, createdAt: "2026-01-01T00:00:00Z" },
   ];
-  assert.equal(tasks.sort(compareTasks)[0].title, "Important");
+  assert.equal(tasks.sort(compareTasks)[0].title, "Soon");
+});
+
+test("tasks without deadlines sort last, even if created first", () => {
+  const state = normalizeState({ tasks: [
+    { title: "Undated", manualOrder: 0 },
+    { title: "Dated", dueDate: "2026-05-12", manualOrder: 1 },
+  ] });
+  assert.deepEqual(state.tasks.sort(compareTasks).map((task) => task.title), ["Dated", "Undated"]);
+});
+
+test("filters combine any selected project with inclusive deadline bounds", () => {
+  const task = normalizeState({ tasks: [{ projectIds: ["lab", "school"], dueDate: "2026-05-12" }] }).tasks[0];
+  assert.equal(matchesTaskFilters(task, { projectIds: ["job", "school"], from: "2026-05-12", to: "2026-05-12" }), true);
+  assert.equal(matchesTaskFilters(task, { projectIds: ["job"], from: "2026-05-12" }), false);
+  assert.equal(matchesTaskFilters(task, { projectIds: ["lab"], to: "2026-05-11" }), false);
+});
+
+test("uncategorized and undated filters are independent; ranges exclude undated tasks", () => {
+  const task = normalizeState({ tasks: [{ title: "Idea" }] }).tasks[0];
+  assert.equal(matchesTaskFilters(task, { projectIds: ["__uncategorized"], status: "undated" }), true);
+  assert.equal(matchesTaskFilters(task, { from: "2026-05-01" }), false);
+});
+
+test("next-seven-days filter excludes overdue and completed work", () => {
+  const now = new Date("2026-05-10T12:00:00");
+  const tasks = normalizeState({ tasks: [
+    { dueDate: "2026-05-09" },
+    { dueDate: "2026-05-12" },
+    { dueDate: "2026-05-12", completed: true },
+    { dueDate: "2026-05-20" },
+  ] }).tasks;
+  assert.deepEqual(tasks.map((task) => matchesTaskFilters(task, { status: "soon" }, now)), [false, true, false, false]);
 });
 
 test("due status distinguishes overdue and next-seven-day work", () => {

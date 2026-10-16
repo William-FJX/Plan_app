@@ -9,7 +9,16 @@ cd /Users/jingxuanfeng/Desktop/Plan_app
 npm run dev
 ```
 
-Open <http://localhost:4173>.
+Open <http://127.0.0.1:4173>. Keep using this same address so the browser uses the same saved data.
+
+## Use the workspace
+
+- **All tasks** combines a four-week timeline, a project directory, and the to-do list.
+- Click a project or task to highlight its dates. A task linked to several projects appears in each relevant timeline row. Use the arrows to browse other weeks; selecting a dated task outside the current period reveals it.
+- **Filter** combines project selection, overdue / next-seven-days / no-deadline options, and inclusive deadline date ranges. Clearing filters returns to all tasks.
+- Tasks sort by deadline, with undated tasks last. Old importance flags no longer affect the interface or sorting.
+- An overdue notice appears above the timeline only while there is overdue work.
+- Quick notes, calendar, archive, and JSON backups remain available from the navigation.
 
 ## Verify
 
@@ -17,6 +26,8 @@ Open <http://localhost:4173>.
 npm test
 npm run check
 ```
+
+With the local server running and Google Chrome installed on macOS, run `npm run test:browser` to check the main flows in a disposable browser profile.
 
 ## Data and backups
 
