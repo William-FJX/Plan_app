@@ -1,2 +1,8 @@
 .DS_Store
 *.log
+
+# Personal planner exports, including browser-created duplicate filenames.
+plan-archive-backup-*.json
+
+# Store renamed backups and other personal files in this folder.
+/private-data/

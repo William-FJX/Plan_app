@@ -36,7 +36,9 @@ With the local server running and Google Chrome installed on macOS, run `npm run
 
 - Tasks, projects, and notes are stored in browser `localStorage`.
 - Use **Data & backup** in the app to export or import JSON.
+- Exported `plan-archive-backup-*.json` files are ignored by Git, including duplicate downloads. Keep renamed backups or other personal files in the ignored `private-data/` folder at the project root, or outside the repository.
 - `task-template.json` is an example import file.
+- Keep personal information out of tracked source files and the example template; Git cannot identify private content automatically. Do not force-add ignored files.
 - Clearing browser storage deletes local data unless it has been exported.
 
 Git synchronizes the app source code. It does not synchronize personal task data between browsers or devices.
