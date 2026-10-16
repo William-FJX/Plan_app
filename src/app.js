@@ -34,6 +34,7 @@ const ui = {
   editingTaskId: null,
   editingProjectId: null,
   selectedProjectId: null,
+  expandedProjectIds: new Set(),
   calendarMode: "week",
   calendarCursor: new Date(),
 };
@@ -179,6 +180,7 @@ function showToast(message) {
 }
 
 function render() {
+  const timelineScrollLeft = document.querySelector(".overview-scroll")?.scrollLeft;
   const details = viewDetails[ui.view] || viewDetails.tasks;
   document.querySelector("#page-eyebrow").textContent = details[0];
   document.querySelector("#page-title").textContent = details[1];
@@ -195,6 +197,8 @@ function render() {
 
   content.innerHTML = renderer();
   renderIcons(content);
+  const timelineScroll = document.querySelector(".overview-scroll");
+  if (timelineScroll && timelineScrollLeft !== undefined) timelineScroll.scrollLeft = timelineScrollLeft;
 }
 
 function visibleTasks() {
@@ -225,36 +229,77 @@ function renderTasksView() {
       <span data-icon="clock"></span><span>You have overdue tasks.</span>
       <button class="text-button" data-action="show-overdue">Review</button>
     </div>` : ""}
-    ${hasFilters() ? `<div class="filter-summary"><span>${escapeHtml(filterDescription())}</span><button class="text-button" data-action="clear-filters">Clear filters</button></div>` : ""}
-    ${renderOverviewTimeline(tasks)}
+    ${renderOverviewTimeline(activeTasks().sort(compareTasks))}
     <div class="selection-bar">
       <span>${selection ? `Highlighting <strong>${escapeHtml(selection)}</strong>${selectedTask && !selectedTask.dueDate && !selectedTask.timeBlock.date ? " · No date assigned yet." : ""}` : "Select a project or task below to highlight it on the timeline."}</span>
       ${selection ? '<button class="text-button" data-action="clear-selection">Clear selection</button>' : ""}
     </div>
-    <div class="workspace-lists">
-      <section class="project-directory" aria-label="Project directory">
-        <div class="section-heading"><h3>Projects</h3><button class="icon-button" data-action="add-project" aria-label="New project" title="New project"><span data-icon="plus"></span></button></div>
-        <div class="directory-list">
-          ${state.projects.map((project) => `
-            <div class="directory-item ${ui.selectedProjectId === project.id ? "is-selected" : ""}">
-              <button class="project-select" data-action="select-project" data-id="${escapeHtml(project.id)}" aria-pressed="${ui.selectedProjectId === project.id}">
-                <i class="project-dot" style="background:${escapeHtml(project.color)}"></i>
-                <span><strong>${escapeHtml(project.name)}</strong><small>${project.deadline ? escapeHtml(formatDate(project.deadline, { year: true })) : "No deadline"}</small></span>
-              </button>
-              <button class="icon-button" data-action="edit-project" data-id="${escapeHtml(project.id)}" aria-label="Edit ${escapeHtml(project.name)}" title="Edit project"><span data-icon="edit"></span></button>
-            </div>
-          `).join("")}
-          <button class="project-select uncategorized ${ui.selectedProjectId === "__uncategorized" ? "is-selected" : ""}" data-action="select-project" data-id="__uncategorized" aria-pressed="${ui.selectedProjectId === "__uncategorized"}"><span data-icon="folder"></span><span>Uncategorized</span></button>
-          ${!state.projects.length ? '<p class="directory-hint">Add a project for school, applications, or anything with a few moving pieces.</p>' : ""}
+    <section class="workspace-list" aria-label="Projects and to-dos">
+      <div class="section-heading">
+        <h3>Projects &amp; to-dos</h3>
+        <div class="list-controls">
+          <button class="text-button" data-action="add-project"><span data-icon="plus"></span>Project</button>
+          <button class="secondary-button ${hasFilters() ? "is-active" : ""}" data-action="open-filters" aria-haspopup="dialog">
+            <span data-icon="filter"></span>${hasFilters() ? "Filters applied" : "Filter"}
+          </button>
         </div>
-        ${selectedProject ? `<div class="project-context"><p>${escapeHtml(selectedProject.description || "Add tasks to this project as things come up.")}</p><button class="text-button" data-action="project-add-task" data-id="${escapeHtml(selectedProject.id)}"><span data-icon="plus"></span>Add task to project</button></div>` : ""}
-      </section>
-      <section class="todo-section" aria-label="To-do list">
-        <div class="section-heading"><h3>To-do list</h3><span class="quiet-label">By deadline</span></div>
-        ${tasks.length ? `<div class="task-list">${tasks.map((task) => taskRow(task)).join("")}</div>` : emptyState("tasks", hasFilters() || ui.search ? "No matching tasks" : "Room for a fresh start", hasFilters() || ui.search ? "Adjust your filters or search to see more." : "Add a task whenever you're ready.", hasFilters() || ui.search ? "" : "New task", "add-task")}
-      </section>
-    </div>
+      </div>
+      ${hasFilters() ? `<div class="filter-summary"><span>${escapeHtml(filterDescription())}</span><button class="text-button" data-action="clear-filters">Clear filters</button></div>` : ""}
+      ${renderWorkspaceList(tasks)}
+    </section>
   `;
+}
+
+function renderWorkspaceList(tasks) {
+  const entries = tasks.filter((task) => !task.projectIds.length)
+    .map((task) => ({ task, sortKey: task }));
+  for (const project of state.projects) {
+    if (ui.filters.projectIds.length && !ui.filters.projectIds.includes(project.id)) continue;
+    const children = tasks.filter((task) => task.projectIds.includes(project.id));
+    const deadlineFilter = ui.filters.status !== "all" || ui.filters.from || ui.filters.to;
+    if (!children.length && (deadlineFilter || (ui.search && !project.name.toLowerCase().includes(ui.search)))) continue;
+    // Order a group by its next task or project deadline, whichever comes first.
+    const dates = [project.deadline, ...children.map((task) => task.dueDate)].filter(Boolean).sort();
+    entries.push({ project, children, sortKey: { dueDate: dates[0] || "", createdAt: project.createdAt } });
+  }
+  entries.sort((a, b) => compareTasks(a.sortKey, b.sortKey));
+  if (!entries.length) {
+    return emptyState("tasks", hasFilters() || ui.search ? "No matching items" : "Room for a fresh start",
+      hasFilters() || ui.search ? "Adjust your filters or search to see more." : "Add a task or a project whenever you're ready.",
+      hasFilters() || ui.search ? "" : "New task", "add-task");
+  }
+  return `<div class="mixed-list">${entries.map((entry) => entry.project
+    ? projectRow(entry.project, entry.children) : taskRow(entry.task)).join("")}</div>`;
+}
+
+function projectRow(project, tasks) {
+  const expanded = ui.expandedProjectIds.has(project.id);
+  return `<div class="project-group" data-project-id="${escapeHtml(project.id)}">
+    <div class="project-row ${ui.selectedProjectId === project.id ? "is-selected" : ""}">
+      <button class="project-toggle" data-action="toggle-project" data-id="${escapeHtml(project.id)}"
+        aria-expanded="${expanded}" aria-controls="project-tasks-${escapeHtml(project.id)}">
+        <span class="project-chevron" data-icon="right"></span>
+        <span class="project-copy">
+          <span class="task-title-line"><strong>${escapeHtml(project.name)}</strong><span class="entry-type">Project</span></span>
+          <span class="task-meta"><i class="project-dot" style="background:${escapeHtml(project.color)}"></i>${escapeHtml(formatDate(project.deadline, { year: true }))}</span>
+        </span>
+      </button>
+      <button class="icon-button" data-action="edit-project" data-id="${escapeHtml(project.id)}" aria-label="Edit ${escapeHtml(project.name)}" title="Edit project"><span data-icon="edit"></span></button>
+    </div>
+    <div class="project-children" id="project-tasks-${escapeHtml(project.id)}" ${expanded ? "" : "hidden"}>
+      ${expanded ? `
+        ${project.description ? `<p class="project-description">${escapeHtml(project.description)}</p>` : ""}
+        ${tasks.length ? tasks.map((task) => taskRow(task, { projectId: project.id })).join("") : '<p class="project-description">No active tasks yet.</p>'}
+        <button class="text-button" data-action="project-add-task" data-id="${escapeHtml(project.id)}"><span data-icon="plus"></span>Add to-do</button>
+      ` : ""}
+    </div>
+  </div>`;
+}
+
+function expandMatchingProjects() {
+  for (const task of visibleTasks()) {
+    for (const id of task.projectIds) ui.expandedProjectIds.add(id);
+  }
 }
 
 function dateOffset(dateString, start) {
@@ -280,9 +325,7 @@ function renderOverviewTimeline(tasks) {
   const todayLine = today >= 0 && today < 28 ? `<i class="today-line" style="left:${((today + 0.5) / 28) * 100}%" title="Today"></i>` : "";
   const allProjects = [...state.projects, { id: "__uncategorized", name: "Uncategorized", color: "#a6a0af", deadline: "" }];
   const rows = allProjects.filter((project) => {
-    if (ui.filters.projectIds.length && !ui.filters.projectIds.includes(project.id)) return false;
     if (project.id === "__uncategorized") return tasks.some((task) => task.projectIds.length === 0);
-    if ((hasFilters() || ui.search) && !tasks.some((task) => taskMatchesProject(task, project.id))) return false;
     return true;
   }).map((project) => {
     const projectTasks = tasks.filter((task) => taskMatchesProject(task, project.id));
@@ -334,9 +377,6 @@ function renderOverviewTimeline(tasks) {
         <button class="icon-button" data-action="timeline-next" aria-label="Next four weeks"><span data-icon="right"></span></button>
         <button class="text-button" data-action="timeline-today">Today</button>
       </div>
-      <button class="secondary-button ${hasFilters() ? "is-active" : ""}" data-action="open-filters" aria-haspopup="dialog">
-        <span data-icon="filter"></span>${hasFilters() ? "Filters applied" : "Filter"}
-      </button>
     </div>
     <div class="overview-scroll" tabindex="0" aria-label="Scroll timeline horizontally">
       <div class="overview-grid">
@@ -389,8 +429,6 @@ function openFilters() {
 
 function clearFilters() {
   ui.filters = { projectIds: [], status: "all", from: "", to: "" };
-  ui.selectedProjectId = null;
-  ui.selectedTaskId = null;
   render();
 }
 
@@ -399,14 +437,14 @@ function taskRow(task, options = {}) {
   const dueLabel = task.dueDate
     ? `${formatDate(task.dueDate, { year: true })}${task.dueTime ? ` · ${formatClock(task.dueTime)}` : ""}`
     : "No deadline";
-  const projects = task.projectIds.map(projectById).filter(Boolean);
+  const projects = task.projectIds.filter((id) => id !== options.projectId).map(projectById).filter(Boolean);
   const isArchive = Boolean(options.archive);
   const isSelected = ui.selectedTaskId === task.id || Boolean(ui.selectedProjectId && taskMatchesProject(task, ui.selectedProjectId));
   return `
     <article class="task-row ${isSelected && !isArchive ? "is-selected" : ""} ${isArchive ? "archive-row" : ""}" data-task-id="${escapeHtml(task.id)}">
       <button class="complete-button" data-action="${isArchive ? "restore-task" : "complete-task"}" data-id="${escapeHtml(task.id)}" aria-label="${isArchive ? "Restore" : "Complete"} ${escapeHtml(task.title)}">${iconMarkup("check")}</button>
       <button class="task-copy" data-action="${isArchive ? "edit-task" : "select-task"}" data-id="${escapeHtml(task.id)}" ${isArchive ? "" : `aria-pressed="${isSelected}"`}>
-        <span class="task-title-line"><strong>${escapeHtml(task.title)}</strong></span>
+        <span class="task-title-line"><strong>${escapeHtml(task.title)}</strong>${isArchive ? "" : '<span class="entry-type">To-do</span>'}</span>
         <span class="task-meta">
           <span class="${dueStatus === "overdue" ? "overdue-text" : ""}">${dueStatus === "overdue" ? "Overdue · " : ""}${escapeHtml(dueLabel)}</span>
           ${projects.map((project) => `<span class="task-project-name">${escapeHtml(project.name)}</span>`).join("")}
@@ -748,6 +786,7 @@ function submitTask(event) {
   } else {
     state = { ...state, tasks: [...state.tasks, task] };
   }
+  for (const id of projectIds) ui.expandedProjectIds.add(id);
   taskDialog.close();
   saveState(existing ? "Task updated." : "Task added to your queue.");
 }
@@ -784,6 +823,7 @@ function submitProject(event) {
       : [...state.projects, project],
   };
   ui.selectedProjectId = project.id;
+  ui.expandedProjectIds.add(project.id);
   ui.selectedTaskId = null;
   focusTimeline(project.deadline);
   projectDialog.close();
@@ -801,6 +841,7 @@ function deleteProject() {
   };
   ui.selectedProjectId = null;
   ui.filters.projectIds = ui.filters.projectIds.filter((id) => id !== project.id);
+  ui.expandedProjectIds.delete(project.id);
   projectDialog.close();
   saveState("Project deleted; linked tasks were kept.");
 }
@@ -857,6 +898,9 @@ async function importBackup(file) {
     const imported = normalizeState(JSON.parse(await file.text()));
     if (!window.confirm(`Import ${imported.projects.length} projects, ${imported.tasks.length} tasks, and ${imported.notes.length} notes? This replaces the data in this browser.`)) return;
     state = imported;
+    ui.selectedTaskId = null;
+    ui.selectedProjectId = null;
+    ui.expandedProjectIds.clear();
     clearFilters();
     dataDialog.close();
     saveState("Backup imported successfully.");
@@ -913,11 +957,7 @@ filterForm.addEventListener("submit", (event) => {
     projectIds: [...document.querySelectorAll("#filter-project-list input:checked")].map((input) => input.value),
     status: status.value, from: from.value, to: to.value,
   };
-  ui.selectedProjectId = null;
-  ui.selectedTaskId = null;
-  const first = visibleTasks().find((task) => task.dueDate || task.timeBlock.date);
-  if (from.value) focusTimeline(from.value);
-  else if (first) focusTimeline(first.dueDate || first.timeBlock.date);
+  expandMatchingProjects();
   filterDialog.close();
   render();
 });
@@ -928,6 +968,7 @@ document.querySelector("#reset-filters-button").addEventListener("click", () => 
 
 searchInput.addEventListener("input", (event) => {
   ui.search = event.target.value.trim().toLowerCase();
+  if (ui.search) expandMatchingProjects();
   render();
 });
 
@@ -973,9 +1014,9 @@ content.addEventListener("click", (event) => {
     ui.search = "";
     searchInput.value = "";
     ui.filters.status = "overdue";
-    const first = visibleTasks()[0];
-    if (first) focusTimeline(first.dueDate);
+    expandMatchingProjects();
     render();
+    document.querySelector(".workspace-list").scrollIntoView({ block: "start" });
   }
   if (action === "clear-selection") {
     ui.selectedTaskId = null;
@@ -995,15 +1036,24 @@ content.addEventListener("click", (event) => {
     event.stopPropagation();
     openProjectDialog(id);
   }
-  if (action === "select-project") {
-    ui.selectedProjectId = ui.selectedProjectId === id ? null : id;
+  if (action === "toggle-project" || action === "select-project") {
+    if (action === "toggle-project") {
+      if (ui.expandedProjectIds.has(id)) ui.expandedProjectIds.delete(id);
+      else ui.expandedProjectIds.add(id);
+      ui.selectedProjectId = id;
+    } else {
+      ui.selectedProjectId = ui.selectedProjectId === id ? null : id;
+    }
     ui.selectedTaskId = null;
     if (ui.selectedProjectId) {
-      const nearest = visibleTasks().find((task) => taskMatchesProject(task, id) && (task.dueDate || task.timeBlock.date));
+      const nearest = activeTasks().sort(compareTasks).find((task) => taskMatchesProject(task, id) && (task.dueDate || task.timeBlock.date));
       focusTimeline(nearest?.dueDate || nearest?.timeBlock.date || projectById(id)?.deadline);
     }
     render();
-    if (ui.selectedProjectId) revealTimelineSelection();
+    if (action === "toggle-project") {
+      [...document.querySelectorAll(".project-toggle")].find((button) => button.dataset.id === id)?.focus({ preventScroll: true });
+    }
+    if (ui.selectedProjectId && action === "select-project") revealTimelineSelection();
   }
   if (action === "project-add-task") openTaskDialog(null, [id]);
   if (action === "delete-note") {

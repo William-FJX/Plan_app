@@ -13,10 +13,7 @@
       <div class="mobile-overlay" id="mobile-overlay"></div>
       <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
         <div class="brand">
-          <svg class="brand-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-            <ellipse cx="24" cy="24" rx="16" ry="9" transform="rotate(-16 24 24)"/>
-            <path d="m11 15-3-5m15 4-1-7m12 9 4-5M9 29l-5 3m20 1 1 7m12-15 6 1"/>
-          </svg>
+          <img class="brand-mark" src="assets/hina-halo.svg" alt="Hina-inspired halo">
           <div>
             <strong>Plan archive</strong>
             <span class="brand-kicker">A little space for your day.</span>
@@ -275,7 +272,7 @@
     <dialog class="app-dialog filter-dialog" id="filter-dialog">
       <form id="filter-form">
         <div class="dialog-header">
-          <h2>Filter tasks</h2>
+          <h2>Filter list</h2>
           <button type="button" class="icon-button" data-close-dialog="filter-dialog" aria-label="Close filters"><span data-icon="close"></span></button>
         </div>
         <div class="form-grid">
@@ -294,7 +291,7 @@
           </label>
           <label class="field"><span>From (inclusive)</span><input name="from" type="date"></label>
           <label class="field"><span>To (inclusive)</span><input name="to" type="date"></label>
-          <p class="field-hint span-2">Date ranges use task deadlines. Tasks without deadlines are excluded when a range is set.</p>
+          <p class="field-hint span-2">Filters apply only to the list, not the timeline. Date ranges use task deadlines and exclude tasks without deadlines.</p>
         </div>
         <div class="dialog-footer split-footer">
           <button type="button" class="text-button" id="reset-filters-button">Clear filters</button>

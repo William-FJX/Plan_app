@@ -116,16 +116,29 @@ try {
     return true;
   })()`);
   await send("Page.reload", { ignoreCache: true });
-  await waitFor(() => evaluate("document.querySelectorAll('.task-row').length === 7"));
+  await waitFor(() => evaluate("document.querySelectorAll('.project-group').length === 4"));
   assert(await evaluate("Boolean(document.querySelector('.overdue-notice'))"), "Overdue work needs a notice.");
-  assert(await evaluate("!document.querySelector('.stat-card, [data-view=soon], [name=important]')"), "Removed UI should not be present.");
+  assert(await evaluate("!document.querySelector('.stat-card, [data-view=soon], [name=important], .project-directory, .todo-section')"), "Removed UI should not be present.");
   assert(await evaluate("document.querySelectorAll('.overview-row').length") === 5, "Timeline must combine projects and uncategorized work.");
-  assert(await evaluate("document.querySelector('.task-row:last-child').dataset.taskId") === "undated", "Legacy importance must not override deadline order.");
+  assert(await evaluate("document.querySelectorAll('.mixed-list > .project-group').length") === 4, "Projects must share the list with standalone tasks.");
+  assert(await evaluate("document.querySelectorAll('.mixed-list > .task-row').length") === 2, "Only standalone tasks belong at the root.");
+  assert(await evaluate("document.querySelectorAll('.project-toggle[aria-expanded=false]').length") === 4, "Project groups should start collapsed.");
+  assert(await evaluate("document.querySelector('.mixed-list > :last-child').dataset.taskId") === "undated", "Legacy importance must not override deadline order.");
+  assert(await evaluate("document.querySelectorAll('.entry-type').length") === 6, "Each root item must identify its type.");
+  assert(await evaluate("Boolean(document.querySelector('.workspace-list [data-action=open-filters]')) && !document.querySelector('.overview-panel [data-action=open-filters]')"), "Filter belongs on the list, not the timeline.");
+  assert(await evaluate("document.querySelector('.brand-mark').complete && document.querySelector('.brand-mark').naturalWidth > 0"), "The halo SVG must load.");
   await screenshot("desktop");
 
-  await evaluate("document.querySelector('.project-directory [data-id=applications]').click(); true");
+  await evaluate("document.querySelector('.project-toggle[data-id=applications]').click(); true");
   assert(await evaluate("document.querySelector('.overview-row[data-project=applications]').classList.contains('is-selected')"), "Project selection must highlight its timeline row.");
-  assert(await evaluate("document.querySelectorAll('.task-row').length") === 7, "Highlighting a project must not filter the to-do list.");
+  assert(await evaluate("document.querySelectorAll('[data-project-id=applications] .task-row').length") === 2, "Expanding a project must reveal its tasks.");
+  assert(await evaluate("document.querySelectorAll('.project-group').length") === 4, "Expanding must not hide other projects.");
+  await evaluate("document.querySelector('.project-toggle[data-id=applications]').click(); true");
+  assert(await evaluate("document.querySelector('.project-toggle[data-id=applications]').getAttribute('aria-expanded')") === "false", "Project must collapse again.");
+  assert(await evaluate("document.activeElement.matches('.project-toggle[data-id=applications]')"), "Toggling must preserve keyboard focus.");
+  assert(await evaluate("document.querySelector('[data-project-id=applications] .project-children').hidden"), "Collapsed tasks must be hidden.");
+  await evaluate("document.querySelector('.project-toggle[data-id=applications]').click(); document.querySelector('.project-toggle[data-id=jobs]').click(); true");
+  assert(await evaluate("document.querySelectorAll('.task-row[data-task-id=shared]').length") === 2, "A linked task must appear inside both projects.");
   await evaluate("document.querySelector('.task-copy[data-id=shared]').click(); true");
   assert(await evaluate("document.querySelectorAll('.overview-event[data-id=shared].is-selected').length") === 2, "A shared task should highlight both project occurrences.");
   await screenshot("selected");
@@ -134,6 +147,7 @@ try {
   await evaluate("document.querySelector('.task-copy[data-id=undated]').click(); true");
   assert(await evaluate("document.querySelector('.selection-bar').textContent.includes('No date assigned')"), "Undated task selection must explain the missing timeline marker.");
   await evaluate("document.querySelector('[data-action=clear-selection]').click(); document.querySelector('[data-action=timeline-today]').click(); true");
+  const timelineBeforeFilters = await evaluate("document.querySelector('.overview-panel').innerHTML");
 
   await evaluate(`(() => {
     document.querySelector('[data-action=open-filters]').click();
@@ -144,9 +158,48 @@ try {
   })()`);
   assert(await evaluate("document.querySelectorAll('.task-row').length") === 1, "Project and upcoming filters should combine.");
   assert(await evaluate("document.querySelector('.task-row').dataset.taskId") === "shared", "Upcoming project filter returned the wrong task.");
-  assert(await evaluate("document.querySelectorAll('.overview-row').length") === 1, "Timeline should follow applied filters.");
+  assert(await evaluate("document.querySelectorAll('.project-group').length") === 1, "Project filter must narrow list groups.");
+  assert(await evaluate("document.querySelector('.overview-panel').innerHTML") === timelineBeforeFilters, "Filtering must preserve every timeline row, marker, selection, and date.");
+  await screenshot("filtered-list");
+  await evaluate("document.querySelector('[data-action=clear-filters]').click(); true");
+  assert(await evaluate("document.querySelector('.overview-panel').innerHTML") === timelineBeforeFilters, "Clearing filters must not alter the timeline.");
+  await evaluate(`(() => {
+    const input = document.querySelector('#search-input');
+    input.value = 'experiment';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+  assert(await evaluate("document.querySelectorAll('.task-row').length") === 1, "Search must reveal a matching task inside its project.");
+  assert(await evaluate("document.querySelector('.task-row').dataset.taskId") === "labtask", "Search returned the wrong nested task.");
+  assert(await evaluate("document.querySelector('.overview-panel').innerHTML") === timelineBeforeFilters, "Search must not filter the timeline.");
+  await evaluate(`(() => {
+    const input = document.querySelector('#search-input');
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('[data-action=open-filters]').click();
+    const form = document.querySelector('#filter-form');
+    const tasks = JSON.parse(localStorage.getItem('plan-archive-state-v1')).tasks;
+    const distant = tasks.find(task => task.id === 'distant').dueDate;
+    form.elements.from.value = distant;
+    form.elements.to.value = distant;
+    form.requestSubmit();
+    return true;
+  })()`);
+  assert(await evaluate("document.querySelectorAll('.task-row').length") === 1, "An inclusive single-day range must return only its task.");
+  assert(await evaluate("document.querySelector('.task-row').dataset.taskId") === "distant", "Date range returned the wrong task.");
+  assert(await evaluate("document.querySelector('.overview-panel').innerHTML") === timelineBeforeFilters, "A distant date filter must not change the timeline window.");
+  await evaluate(`(() => {
+    document.querySelector('[data-action=open-filters]').click();
+    document.querySelector('#filter-project-list input[value=school]').checked = true;
+    document.querySelector('#filter-form').requestSubmit();
+    return true;
+  })()`);
+  assert(await evaluate("document.querySelector('.workspace-list .empty-state').textContent.includes('No matching items')"), "Zero matches need a useful list empty state.");
+  assert(await evaluate("document.querySelector('.overview-panel').innerHTML") === timelineBeforeFilters, "An empty result must keep the full timeline.");
+
   await evaluate("document.querySelector('[data-action=clear-filters]').click(); document.querySelector('[data-action=show-overdue]').click(); true");
   assert(await evaluate("document.querySelector('.task-row').dataset.taskId") === "overdue", "Notice Review action should show overdue tasks.");
+  assert(await evaluate("document.querySelector('.overview-panel').innerHTML") === timelineBeforeFilters, "Overdue review must only filter the list.");
   await evaluate("document.querySelector('.task-row .complete-button').click(); true");
   assert(await evaluate("!document.querySelector('.overdue-notice')"), "Notice should disappear when no overdue work remains.");
   await evaluate("document.querySelector('[data-action=clear-filters]').click(); true");
@@ -159,7 +212,16 @@ try {
     return true;
   })()`);
   assert(await evaluate("document.querySelectorAll('.task-row').length") === 1, "Uncategorized undated filter must work.");
-  await evaluate("document.querySelector('[data-action=clear-filters]').click(); document.querySelector('[data-action=open-filters]').click(); true");
+  assert(await evaluate("document.querySelectorAll('.project-group').length") === 0, "Standalone-only filter must hide project groups.");
+  await evaluate("document.querySelector('[data-action=clear-filters]').click(); true");
+
+  await evaluate("document.querySelector('.task-row[data-task-id=shared] .complete-button').click(); true");
+  assert(await evaluate("document.querySelectorAll('.task-row[data-task-id=shared], .overview-event[data-id=shared]').length") === 0, "Completing a shared task must update every occurrence.");
+  assert(await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).tasks.filter(task => task.id === 'shared' && task.archived).length") === 1, "Shared tasks must remain one stored record.");
+  await evaluate("document.querySelector('[data-view=archive]').click(); document.querySelector('[data-action=restore-task][data-id=shared]').click(); document.querySelector('[data-view=tasks]').click(); true");
+  assert(await evaluate("document.querySelectorAll('.task-row[data-task-id=shared]').length") === 2, "Restoring must update both project groups.");
+
+  await evaluate("window.scrollTo(0, 0); document.querySelector('[data-action=open-filters]').click(); true");
   await screenshot("filters");
   await evaluate("document.querySelector('#filter-dialog').close(); true");
 
@@ -173,17 +235,32 @@ try {
   await waitFor(() => evaluate("document.readyState === 'complete'"));
   assert(await evaluate("getComputedStyle(document.querySelector('.mobile-add-button')).display") === "grid", "Mobile create-task button is not visible.");
   await screenshot("mobile");
+  await evaluate("document.querySelector('.project-toggle[data-id=applications]').click(); true");
+  assert(await evaluate("document.querySelector('.project-toggle[data-id=applications]').getAttribute('aria-expanded')") === "true", "Mobile project dropdown must open.");
+  assert(await evaluate("Boolean(document.querySelector('[data-project-id=applications] .task-row'))"), "Mobile project dropdown must expose tasks.");
+  await screenshot("mobile-expanded");
   await evaluate("document.querySelector('#mobile-menu-button').click(); true");
   assert(await evaluate("document.body.classList.contains('menu-open')") === true, "Mobile navigation did not open.");
+  await screenshot("mobile-menu");
   const mobileViewport = await evaluate("({ width: window.innerWidth, documentWidth: document.documentElement.scrollWidth })");
   assert(mobileViewport.documentWidth <= mobileViewport.width + 1, "The mobile layout causes horizontal page overflow.");
   await evaluate("document.querySelector('#mobile-overlay').click(); document.querySelector('[data-action=open-filters]').click(); true");
   assert(await evaluate("document.querySelector('#filter-dialog').open"), "Mobile filter dialog did not open.");
   await screenshot("mobile-filters");
+  await evaluate("document.querySelector('#filter-dialog').close(); document.querySelector('.overview-scroll').scrollLeft = 160; true");
+  const mobileTimelineScroll = await evaluate("document.querySelector('.overview-scroll').scrollLeft");
+  await evaluate("document.querySelector('[data-action=open-filters]').click(); document.querySelector('#filter-form').elements.status.value = 'undated'; document.querySelector('#filter-form').requestSubmit(); true");
+  assert(await evaluate("document.querySelector('.overview-scroll').scrollLeft") === mobileTimelineScroll, "List filtering must preserve the mobile timeline scroll position.");
+  assert(await evaluate("document.querySelectorAll('.overview-row').length") === 5, "Mobile list filtering must keep all timeline rows.");
 
+  if (process.env.QA_SCREENSHOTS) {
+    await evaluate("document.querySelector('#filter-dialog').close(); const preview = document.createElement('img'); preview.src = '/assets/hina-halo.svg'; preview.style.cssText = 'width:360px;height:auto;display:block;margin:40px auto'; document.body.replaceChildren(preview); document.body.style.background = '#faf9fc'; true");
+    await waitFor(() => evaluate("document.querySelector('img').complete"));
+    await screenshot("halo");
+  }
   assert(browserErrors.length === 0, `Browser runtime errors: ${browserErrors.join(" | ")}`);
   console.log(JSON.stringify({
-    desktop: { projectCreated: true, taskCreated: true, weekCalendar: true, noteCreated: true, archiveRestore: true, integratedTimeline: true, sharedTaskHighlight: true, combinedFilters: true, overdueNotice: true },
+    desktop: { projectCreated: true, taskCreated: true, weekCalendar: true, noteCreated: true, archiveRestore: true, integratedTimeline: true, mixedList: true, projectDropdowns: true, sharedTaskHighlight: true, listOnlyFilters: true, haloLoaded: true, overdueNotice: true },
     mobile: { ...mobileViewport, menuOpened: true, createButtonVisible: true },
     browserErrors: 0,
   }, null, 2));

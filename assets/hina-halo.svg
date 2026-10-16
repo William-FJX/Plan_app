@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 68" fill="none">
+  <title>Hina-inspired halo</title>
+  <!-- Flat front-view crown, side diamonds, lower rings, and pendant. -->
+  <path d="m2 33 13-4 6 4-6 4Zm77 0 6-4 13 4-13 4Z" fill="#a966d0"/>
+  <path d="M24 36V24l3 4 8-8v8l12-9v9l13-8v8l12-7v8l4-5v12c-9 7-43 7-52 0Z" fill="#403047" stroke="#78528e" stroke-width="1.2" stroke-linejoin="round"/>
+  <path d="m27 30 4 6m4-7 6 7m5-8 7 8m5-8 7 8m4-7 5 7" stroke="#bd7cdd" stroke-width="1.6"/>
+  <path d="M28 38c12 4 32 4 44 0" stroke="#ad83bf" stroke-width="1.2"/>
+  <ellipse cx="50" cy="43" rx="15" ry="2" stroke="#403047" stroke-width="1.4"/>
+  <ellipse cx="50" cy="47" rx="8" ry="1.4" stroke="#b273d4" stroke-width="1.4"/>
+  <path d="m50 50 3 4-3 8-3-8Z" fill="#a966d0"/>
+</svg>
