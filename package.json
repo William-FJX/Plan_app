@@ -1,0 +1,12 @@
+{
+  "name": "plan-archive",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node tools/dev-server.mjs",
+    "test": "node --test",
+    "test:browser": "node tests/browser-smoke.mjs",
+    "check": "node --check src/model.js && node --check src/app.js"
+  }
+}

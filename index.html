@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#eaf6ff">
+    <meta name="description" content="Plan Archive is a calm, game-inspired personal planner for projects, tasks, deadlines, calendars, and quick notes.">
+    <title>Plan Archive</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <div class="mobile-overlay" id="mobile-overlay"></div>
+      <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <span class="brand-halo"></span>
+            <span class="brand-cross"></span>
+          </div>
+          <div>
+            <span class="brand-kicker">PERSONAL SYSTEM</span>
+            <strong>PLAN//ARCHIVE</strong>
+          </div>
+        </div>
+
+        <nav class="nav-list" id="nav-list">
+          <button class="nav-item is-active" data-view="tasks">
+            <span class="nav-icon" data-icon="tasks"></span>
+            <span>All tasks</span>
+            <span class="nav-count" id="count-tasks">0</span>
+          </button>
+          <button class="nav-item" data-view="soon">
+            <span class="nav-icon" data-icon="clock"></span>
+            <span>Due soon</span>
+            <span class="nav-count nav-count-alert" id="count-soon">0</span>
+          </button>
+          <button class="nav-item" data-view="calendar">
+            <span class="nav-icon" data-icon="calendar"></span>
+            <span>Calendar</span>
+          </button>
+          <button class="nav-item" data-view="projects">
+            <span class="nav-icon" data-icon="layers"></span>
+            <span>Projects</span>
+            <span class="nav-count" id="count-projects">0</span>
+          </button>
+          <button class="nav-item" data-view="notes">
+            <span class="nav-icon" data-icon="note"></span>
+            <span>Quick notes</span>
+            <span class="nav-count" id="count-notes">0</span>
+          </button>
+          <button class="nav-item" data-view="archive">
+            <span class="nav-icon" data-icon="archive"></span>
+            <span>Archive</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="local-badge">
+            <span class="status-dot"></span>
+            <div>
+              <strong>Local mode</strong>
+              <small>Saved in this browser</small>
+            </div>
+          </div>
+          <button class="ghost-button full-width" id="open-data-button">
+            <span data-icon="database"></span>
+            Data &amp; backup
+          </button>
+        </div>
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <div class="topbar-title">
+            <button class="icon-button mobile-menu-button" id="mobile-menu-button" aria-label="Open menu">
+              <span data-icon="menu"></span>
+            </button>
+            <div>
+              <span class="eyebrow" id="page-eyebrow">MISSION CONTROL</span>
+              <h1 id="page-title">All tasks</h1>
+            </div>
+          </div>
+          <div class="topbar-actions">
+            <label class="search-box" aria-label="Search tasks and projects">
+              <span data-icon="search"></span>
+              <input id="search-input" type="search" placeholder="Search your archive…">
+            </label>
+            <div class="date-chip" id="today-chip"></div>
+            <button class="primary-button" id="add-task-button">
+              <span data-icon="plus"></span>
+              <span>New task</span>
+            </button>
+          </div>
+        </header>
+
+        <section class="content" id="content" aria-live="polite"></section>
+      </main>
+    </div>
+
+    <button class="mobile-add-button" id="mobile-add-button" aria-label="Create task">
+      <span data-icon="plus"></span>
+    </button>
+
+    <dialog class="app-dialog task-dialog" id="task-dialog">
+      <form id="task-form">
+        <div class="dialog-header">
+          <div>
+            <span class="eyebrow">TASK RECORD</span>
+            <h2 id="task-dialog-title">Create task</h2>
+          </div>
+          <button type="button" class="icon-button" data-close-dialog="task-dialog" aria-label="Close">
+            <span data-icon="close"></span>
+          </button>
+        </div>
+
+        <div class="form-grid">
+          <label class="field span-2">
+            <span>Task name <b>*</b></span>
+            <input name="title" required maxlength="120" placeholder="What needs to happen?">
+          </label>
+
+          <label class="important-toggle span-2">
+            <input name="important" type="checkbox">
+            <span class="important-star">★</span>
+            <span>
+              <strong>Mark as important</strong>
+              <small>Important tasks appear first.</small>
+            </span>
+          </label>
+
+          <label class="field">
+            <span>Deadline date</span>
+            <input name="dueDate" type="date">
+          </label>
+          <label class="field">
+            <span>Deadline time</span>
+            <input name="dueTime" type="time">
+          </label>
+
+          <label class="field span-2">
+            <span>Location</span>
+            <input name="location" maxlength="100" placeholder="Optional place or link">
+          </label>
+
+          <label class="field span-2">
+            <span>Instructions</span>
+            <textarea name="instructions" rows="3" maxlength="1200" placeholder="Context, requirements, or useful links"></textarea>
+          </label>
+
+          <fieldset class="field-group span-2">
+            <legend>Projects <small>Choose any number, or leave uncategorized.</small></legend>
+            <div class="project-checklist" id="task-project-list"></div>
+          </fieldset>
+
+          <fieldset class="field-group span-2">
+            <legend>Subtasks</legend>
+            <div class="subtask-editor" id="subtask-editor"></div>
+            <button type="button" class="text-button" id="add-subtask-button">
+              <span data-icon="plus"></span> Add subtask
+            </button>
+          </fieldset>
+
+          <fieldset class="field-group span-2">
+            <legend>Optional time block</legend>
+            <div class="form-grid compact-grid">
+              <label class="field">
+                <span>Date</span>
+                <input name="blockDate" type="date">
+              </label>
+              <label class="field">
+                <span>Start</span>
+                <input name="blockStart" type="time">
+              </label>
+              <label class="field">
+                <span>End</span>
+                <input name="blockEnd" type="time">
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="field-group span-2">
+            <legend>Repeat</legend>
+            <div class="form-grid compact-grid">
+              <label class="field">
+                <span>Pattern</span>
+                <select name="repeatType" id="repeat-type">
+                  <option value="none">Does not repeat</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </label>
+              <label class="field custom-repeat-field is-hidden">
+                <span>Every</span>
+                <input name="repeatInterval" type="number" min="1" max="99" value="1">
+              </label>
+              <label class="field custom-repeat-field is-hidden">
+                <span>Unit</span>
+                <select name="repeatUnit" id="repeat-unit">
+                  <option value="day">Day(s)</option>
+                  <option value="week">Week(s)</option>
+                  <option value="month">Month(s)</option>
+                </select>
+              </label>
+            </div>
+            <div class="weekday-picker is-hidden" id="weekday-picker" aria-label="Repeat on weekdays">
+              <label><input type="checkbox" value="1"><span>Mon</span></label>
+              <label><input type="checkbox" value="2"><span>Tue</span></label>
+              <label><input type="checkbox" value="3"><span>Wed</span></label>
+              <label><input type="checkbox" value="4"><span>Thu</span></label>
+              <label><input type="checkbox" value="5"><span>Fri</span></label>
+              <label><input type="checkbox" value="6"><span>Sat</span></label>
+              <label><input type="checkbox" value="0"><span>Sun</span></label>
+            </div>
+          </fieldset>
+        </div>
+
+        <div class="dialog-footer">
+          <button type="button" class="secondary-button" data-close-dialog="task-dialog">Cancel</button>
+          <button type="submit" class="primary-button">Save task</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="app-dialog" id="project-dialog">
+      <form id="project-form">
+        <div class="dialog-header">
+          <div>
+            <span class="eyebrow">PROJECT FILE</span>
+            <h2 id="project-dialog-title">Create project</h2>
+          </div>
+          <button type="button" class="icon-button" data-close-dialog="project-dialog" aria-label="Close">
+            <span data-icon="close"></span>
+          </button>
+        </div>
+        <div class="form-grid">
+          <label class="field span-2">
+            <span>Project name <b>*</b></span>
+            <input name="name" required maxlength="80" placeholder="Applications, lab, job hunt…">
+          </label>
+          <label class="field span-2">
+            <span>Description</span>
+            <textarea name="description" rows="3" maxlength="500" placeholder="What outcome are you working toward?"></textarea>
+          </label>
+          <label class="field">
+            <span>Overall deadline</span>
+            <input name="deadline" type="date">
+          </label>
+          <label class="field">
+            <span>Accent color</span>
+            <input name="color" type="color" value="#4aa8ff">
+          </label>
+        </div>
+        <div class="dialog-footer split-footer">
+          <button type="button" class="danger-text-button is-hidden" id="delete-project-button">Delete project</button>
+          <div>
+            <button type="button" class="secondary-button" data-close-dialog="project-dialog">Cancel</button>
+            <button type="submit" class="primary-button">Save project</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="app-dialog data-dialog" id="data-dialog">
+      <div class="dialog-header">
+        <div>
+          <span class="eyebrow">LOCAL STORAGE</span>
+          <h2>Data &amp; backup</h2>
+        </div>
+        <button type="button" class="icon-button" data-close-dialog="data-dialog" aria-label="Close">
+          <span data-icon="close"></span>
+        </button>
+      </div>
+      <div class="data-warning">
+        <span data-icon="shield"></span>
+        <p><strong>Your data stays in this browser.</strong> GitHub stores the app code, not your tasks. Export a backup before clearing browser data or changing devices.</p>
+      </div>
+      <div class="data-actions">
+        <button class="data-card" id="export-button">
+          <span class="data-card-icon" data-icon="download"></span>
+          <span><strong>Export backup</strong><small>Download all current data as JSON.</small></span>
+        </button>
+        <label class="data-card" for="import-input">
+          <span class="data-card-icon" data-icon="upload"></span>
+          <span><strong>Import backup</strong><small>Replace local data from a Plan Archive JSON file.</small></span>
+          <input id="import-input" type="file" accept="application/json,.json" hidden>
+        </label>
+        <a class="data-card" href="task-template.json" download>
+          <span class="data-card-icon" data-icon="file"></span>
+          <span><strong>Download template</strong><small>Use an example file for structured input.</small></span>
+        </a>
+      </div>
+    </dialog>
+
+    <div class="toast-region" id="toast-region" aria-live="polite"></div>
+
+    <script type="module" src="src/app.js"></script>
+  </body>
+</html>

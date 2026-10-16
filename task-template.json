@@ -1,0 +1,47 @@
+{
+  "app": "Plan Archive",
+  "schemaVersion": 1,
+  "exportedAt": "2026-01-01T12:00:00.000Z",
+  "data": {
+    "projects": [
+      {
+        "id": "project-application",
+        "name": "Graduate Applications",
+        "description": "Applications, recommendation letters, and supporting materials.",
+        "deadline": "2026-12-01",
+        "color": "#4aa8ff",
+        "createdAt": "2026-01-01T12:00:00.000Z"
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task-example",
+        "title": "Draft statement of purpose",
+        "instructions": "Write the research-interest section first.",
+        "location": "Library",
+        "dueDate": "2026-11-01",
+        "dueTime": "18:00",
+        "important": true,
+        "projectIds": ["project-application"],
+        "subtasks": [
+          { "id": "subtask-outline", "title": "Create outline", "completed": false }
+        ],
+        "recurrence": { "type": "none", "interval": 1, "unit": "week", "weekdays": [] },
+        "timeBlock": { "date": "2026-10-25", "start": "14:00", "end": "16:00" },
+        "completed": false,
+        "completedAt": "",
+        "archived": false,
+        "archivedAt": "",
+        "createdAt": "2026-01-01T12:00:00.000Z",
+        "manualOrder": 0
+      }
+    ],
+    "notes": [
+      {
+        "id": "note-example",
+        "text": "Ask the lab mentor which project example best shows independent work.",
+        "createdAt": "2026-01-01T12:00:00.000Z"
+      }
+    ]
+  }
+}
