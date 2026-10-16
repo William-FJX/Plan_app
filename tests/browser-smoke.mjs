@@ -40,6 +40,7 @@ try {
   const initialTitle = await evaluate("document.querySelector('#page-title').textContent");
   assert(initialTitle === "All tasks", "The initial All tasks view did not render.");
   assert(await evaluate("document.querySelectorAll('.task-row').length") === 0, "Fresh storage should start with no tasks.");
+  assert(await evaluate("(() => { const message = document.querySelector('.timeline-empty').getBoundingClientRect(); const scroll = document.querySelector('.overview-scroll').getBoundingClientRect(); return message.left >= scroll.left && message.right <= scroll.right; })()"), "An empty timeline must keep its hint in view.");
 
   await evaluate(`(() => {
     document.querySelector('[data-action="add-project"]').click();
@@ -106,6 +107,7 @@ try {
         { id: 'shared', title: 'Update research CV', dueDate: date(3), projectIds: ['applications', 'jobs'] },
         { id: 'homework', title: 'Finish analysis problem set', dueDate: date(5), projectIds: ['school'] },
         { id: 'labtask', title: 'Review experiment results', dueDate: date(7), projectIds: ['lab'], timeBlock: { date: date(4), start: '14:00', end: '15:00' } },
+        { id: 'labfollowup', title: 'Send lab report', dueDate: date(7), projectIds: ['lab'] },
         { id: 'independent', title: 'Book a dentist appointment', dueDate: date(9) },
         { id: 'undated', title: 'Choose a book for the weekend', important: true },
         { id: 'distant', title: 'Prepare interview portfolio', dueDate: date(70), projectIds: ['jobs'] },
@@ -120,6 +122,23 @@ try {
   assert(await evaluate("Boolean(document.querySelector('.overdue-notice'))"), "Overdue work needs a notice.");
   assert(await evaluate("!document.querySelector('.stat-card, [data-view=soon], [name=important], .project-directory, .todo-section')"), "Removed UI should not be present.");
   assert(await evaluate("document.querySelectorAll('.overview-row').length") === 5, "Timeline must combine projects and uncategorized work.");
+  const dayHeaders = await evaluate("[...document.querySelectorAll('.overview-axis [data-date]')].map(day => day.dataset.date)");
+  assert(dayHeaders.length === 84 && dayHeaders.every((day, index) => !index || Date.parse(day) - Date.parse(dayHeaders[index - 1]) === 86400000), "Timeline must label every consecutive day, including month boundaries.");
+  const today = await evaluate("(async () => { const { toDateInput } = await import('/src/model.js'); return toDateInput(new Date()); })()");
+  await assertTodayFirst(today);
+  assert(await evaluate(`(() => {
+    const headers = [...document.querySelectorAll('.overview-axis [data-date]')];
+    return [...document.querySelectorAll('.overview-event')].every(event => {
+      const day = headers.find(header => header.dataset.date === event.dataset.date).getBoundingClientRect();
+      const item = event.getBoundingClientRect();
+      return item.left >= day.left && item.right <= day.right;
+    });
+  })()`), "Every deadline and time block must fit beneath its own date.");
+  assert(await evaluate(`(() => {
+    const first = document.querySelector('.overview-event[data-id=labtask][data-kind=due]').getBoundingClientRect();
+    const second = document.querySelector('.overview-event[data-id=labfollowup]').getBoundingClientRect();
+    return Math.abs(first.left - second.left) < 1 && first.bottom <= second.top;
+  })()`), "Deadlines on the same day must stack without overlapping.");
   assert(await evaluate("document.querySelectorAll('.mixed-list > .project-group').length") === 4, "Projects must share the list with standalone tasks.");
   assert(await evaluate("document.querySelectorAll('.mixed-list > .task-row').length") === 2, "Only standalone tasks belong at the root.");
   assert(await evaluate("document.querySelectorAll('.project-toggle[aria-expanded=false]').length") === 4, "Project groups should start collapsed.");
@@ -128,6 +147,40 @@ try {
   assert(await evaluate("Boolean(document.querySelector('.workspace-list [data-action=open-filters]')) && !document.querySelector('.overview-panel [data-action=open-filters]')"), "Filter belongs on the list, not the timeline.");
   assert(await evaluate("document.querySelector('.brand-mark').complete && document.querySelector('.brand-mark').naturalWidth > 0"), "The halo SVG must load.");
   await screenshot("desktop");
+
+  // Cross the rolling window repeatedly without changing the visible date or scroll container.
+  for (const direction of [1, 1, 1, 1, -1, -1, -1, -1, -1, -1]) {
+    const previousStart = (await timelineViewport()).loadedStart;
+    const anchor = await evaluate(`(() => {
+      const scroll = document.querySelector('.overview-scroll');
+      window.timelineScrollContainer = scroll;
+      scroll.scrollLeft = ${direction} > 0 ? scroll.scrollWidth - scroll.clientWidth - 200 : 200;
+      const edge = scroll.getBoundingClientRect().left + scroll.querySelector('.overview-axis > span').offsetWidth;
+      const first = [...scroll.querySelectorAll('.overview-axis [data-date]')].find(header => header.getBoundingClientRect().right > edge + 1);
+      const anchor = { date: first.dataset.date, offset: first.getBoundingClientRect().left - edge };
+      scroll.dispatchEvent(new Event('scroll'));
+      return anchor;
+    })()`);
+    await waitFor(async () => (await timelineViewport()).loadedStart !== previousStart);
+    const after = await timelineViewport();
+    assert(Date.parse(after.loadedStart) - Date.parse(previousStart) === direction * 28 * 86400000, "Scrolling near either edge must load the next set of dates.");
+    assert(after.dayCount === 84, "Continuous scrolling must keep the number of rendered days bounded.");
+    assert(after.firstVisible === anchor.date && Math.abs(after.offset - anchor.offset) < 1, "Recycling dates must not jump the visible timeline.");
+    assert(await evaluate("window.timelineScrollContainer === document.querySelector('.overview-scroll')"), "Recycling days must keep the native scroll container intact.");
+  }
+  assert((await timelineViewport()).firstVisible < today, "Scrolling backward must allow dates before today.");
+  await evaluate("document.querySelector('[data-action=timeline-today]').click(); true");
+  await assertTodayFirst(today);
+  await evaluate("document.querySelector('[data-action=timeline-next]').click(); true");
+  await waitFor(async () => (await timelineViewport()).firstVisible !== today);
+  assert(Date.parse((await timelineViewport()).firstVisible) - Date.parse(today) === 7 * 86400000, "Forward arrow must move the visible dates by one week.");
+  await evaluate("document.querySelector('[data-action=timeline-prev]').click(); true");
+  await assertTodayFirst(today);
+  const wheelTarget = await evaluate("(() => { const rect = document.querySelector('.overview-scroll').getBoundingClientRect(); return { x: rect.right - 50, y: rect.top + 50 }; })()");
+  await send("Input.dispatchMouseEvent", { type: "mouseWheel", ...wheelTarget, deltaX: 1100, deltaY: 0 });
+  await waitFor(async () => (await timelineViewport()).firstVisible !== today);
+  await evaluate("document.querySelector('[data-action=timeline-today]').click(); true");
+  await assertTodayFirst(today);
 
   await evaluate("document.querySelector('.project-toggle[data-id=applications]').click(); true");
   assert(await evaluate("document.querySelector('.overview-row[data-project=applications]').classList.contains('is-selected')"), "Project selection must highlight its timeline row.");
@@ -147,6 +200,7 @@ try {
   await evaluate("document.querySelector('.task-copy[data-id=undated]').click(); true");
   assert(await evaluate("document.querySelector('.selection-bar').textContent.includes('No date assigned')"), "Undated task selection must explain the missing timeline marker.");
   await evaluate("document.querySelector('[data-action=clear-selection]').click(); document.querySelector('[data-action=timeline-today]').click(); true");
+  await assertTodayFirst(today);
   const timelineBeforeFilters = await evaluate("document.querySelector('.overview-panel').innerHTML");
 
   await evaluate(`(() => {
@@ -235,6 +289,20 @@ try {
   await waitFor(() => evaluate("document.readyState === 'complete'"));
   assert(await evaluate("getComputedStyle(document.querySelector('.mobile-add-button')).display") === "grid", "Mobile create-task button is not visible.");
   await screenshot("mobile");
+  await assertTodayFirst(today);
+  await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+  const touchY = await evaluate("document.querySelector('.overview-scroll').getBoundingClientRect().top + 60");
+  await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 345, y: touchY }] });
+  await send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 165, y: touchY }] });
+  await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await waitFor(async () => (await timelineViewport()).firstVisible !== today);
+  await evaluate("document.querySelector('[data-action=timeline-today]').click(); true");
+  await assertTodayFirst(today);
+  const mobileStart = (await timelineViewport()).loadedStart;
+  await evaluate("const timeline = document.querySelector('.overview-scroll'); timeline.scrollLeft = timeline.scrollWidth - timeline.clientWidth - 100; timeline.dispatchEvent(new Event('scroll')); true");
+  await waitFor(async () => (await timelineViewport()).loadedStart !== mobileStart);
+  await evaluate("document.querySelector('[data-action=timeline-today]').click(); true");
+  await assertTodayFirst(today);
   await evaluate("document.querySelector('.project-toggle[data-id=applications]').click(); true");
   assert(await evaluate("document.querySelector('.project-toggle[data-id=applications]').getAttribute('aria-expanded')") === "true", "Mobile project dropdown must open.");
   assert(await evaluate("Boolean(document.querySelector('[data-project-id=applications] .task-row'))"), "Mobile project dropdown must expose tasks.");
@@ -247,7 +315,7 @@ try {
   await evaluate("document.querySelector('#mobile-overlay').click(); document.querySelector('[data-action=open-filters]').click(); true");
   assert(await evaluate("document.querySelector('#filter-dialog').open"), "Mobile filter dialog did not open.");
   await screenshot("mobile-filters");
-  await evaluate("document.querySelector('#filter-dialog').close(); document.querySelector('.overview-scroll').scrollLeft = 160; true");
+  await evaluate("document.querySelector('#filter-dialog').close(); document.querySelector('.overview-scroll').scrollLeft += 160; true");
   const mobileTimelineScroll = await evaluate("document.querySelector('.overview-scroll').scrollLeft");
   await evaluate("document.querySelector('[data-action=open-filters]').click(); document.querySelector('#filter-form').elements.status.value = 'undated'; document.querySelector('#filter-form').requestSubmit(); true");
   assert(await evaluate("document.querySelector('.overview-scroll').scrollLeft") === mobileTimelineScroll, "List filtering must preserve the mobile timeline scroll position.");
@@ -260,7 +328,7 @@ try {
   }
   assert(browserErrors.length === 0, `Browser runtime errors: ${browserErrors.join(" | ")}`);
   console.log(JSON.stringify({
-    desktop: { projectCreated: true, taskCreated: true, weekCalendar: true, noteCreated: true, archiveRestore: true, integratedTimeline: true, mixedList: true, projectDropdowns: true, sharedTaskHighlight: true, listOnlyFilters: true, haloLoaded: true, overdueNotice: true },
+    desktop: { projectCreated: true, taskCreated: true, weekCalendar: true, noteCreated: true, archiveRestore: true, integratedTimeline: true, todayFirst: true, continuousScrolling: true, mixedList: true, projectDropdowns: true, sharedTaskHighlight: true, listOnlyFilters: true, haloLoaded: true, overdueNotice: true },
     mobile: { ...mobileViewport, menuOpened: true, createButtonVisible: true },
     browserErrors: 0,
   }, null, 2));
@@ -273,6 +341,22 @@ async function screenshot(name) {
   if (!process.env.QA_SCREENSHOTS) return;
   const result = await send("Page.captureScreenshot", { format: "png" });
   await writeFile(process.env.QA_SCREENSHOTS + "/" + name + ".png", Buffer.from(result.data, "base64"));
+}
+
+async function timelineViewport() {
+  return evaluate(`(() => {
+    const scroll = document.querySelector('.overview-scroll');
+    const headers = [...scroll.querySelectorAll('.overview-axis [data-date]')];
+    const edge = scroll.getBoundingClientRect().left + scroll.querySelector('.overview-axis > span').offsetWidth;
+    const first = headers.find(header => header.getBoundingClientRect().right > edge + 1);
+    return { loadedStart: headers[0].dataset.date, firstVisible: first.dataset.date,
+      offset: first.getBoundingClientRect().left - edge, dayCount: headers.length };
+  })()`);
+}
+
+async function assertTodayFirst(today) {
+  const viewport = await timelineViewport();
+  assert(viewport.firstVisible === today && Math.abs(viewport.offset) < 1, "Today must be the first visible date, aligned exactly to the left edge.");
 }
 
 function handleMessage(event) {

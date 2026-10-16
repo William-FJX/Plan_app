@@ -25,6 +25,9 @@ const searchInput = document.querySelector("#search-input");
 const toastRegion = document.querySelector("#toast-region");
 
 let state = loadState();
+const TIMELINE_STEP = 28;
+const TIMELINE_DAYS = TIMELINE_STEP * 3;
+const TIMELINE_DAY_WIDTH = 124;
 const ui = {
   view: "tasks",
   filters: { projectIds: [], status: "all", from: "", to: "" },
@@ -179,8 +182,9 @@ function showToast(message) {
   window.setTimeout(() => toast.remove(), 3300);
 }
 
-function render() {
-  const timelineScrollLeft = document.querySelector(".overview-scroll")?.scrollLeft;
+function render(options = {}) {
+  const timelineScrollLeft = options.timelineScrollLeft ?? document.querySelector(".overview-scroll")?.scrollLeft
+    ?? TIMELINE_STEP * TIMELINE_DAY_WIDTH;
   const details = viewDetails[ui.view] || viewDetails.tasks;
   document.querySelector("#page-eyebrow").textContent = details[0];
   document.querySelector("#page-title").textContent = details[1];
@@ -198,7 +202,10 @@ function render() {
   content.innerHTML = renderer();
   renderIcons(content);
   const timelineScroll = document.querySelector(".overview-scroll");
-  if (timelineScroll && timelineScrollLeft !== undefined) timelineScroll.scrollLeft = timelineScrollLeft;
+  if (timelineScroll) {
+    timelineScroll.scrollLeft = timelineScrollLeft;
+    updateTimelinePeriod(timelineScroll);
+  }
 }
 
 function visibleTasks() {
@@ -312,17 +319,21 @@ function taskMatchesProject(task, projectId) {
   return projectId === "__uncategorized" ? task.projectIds.length === 0 : task.projectIds.includes(projectId);
 }
 
+function timelineStart() {
+  const start = new Date(ui.timelineCursor);
+  start.setDate(start.getDate() - TIMELINE_STEP);
+  return start;
+}
+
 function renderOverviewTimeline(tasks) {
-  const start = weekStart(ui.timelineCursor);
-  const end = new Date(start);
-  end.setDate(end.getDate() + 27);
-  const weeks = Array.from({ length: 4 }, (_, index) => {
+  const start = timelineStart();
+  const days = Array.from({ length: TIMELINE_DAYS }, (_, index) => {
     const date = new Date(start);
-    date.setDate(date.getDate() + index * 7);
-    return `<span>${escapeHtml(formatDate(toDateInput(date)))}</span>`;
+    date.setDate(date.getDate() + index);
+    return `<span data-date="${toDateInput(date)}">${escapeHtml(formatDate(toDateInput(date)))}</span>`;
   }).join("");
   const today = dateOffset(todayInput(), start);
-  const todayLine = today >= 0 && today < 28 ? `<i class="today-line" style="left:${((today + 0.5) / 28) * 100}%" title="Today"></i>` : "";
+  const todayLine = today >= 0 && today < TIMELINE_DAYS ? `<i class="today-line" style="left:${((today + 0.5) / TIMELINE_DAYS) * 100}%" title="Today"></i>` : "";
   const allProjects = [...state.projects, { id: "__uncategorized", name: "Uncategorized", color: "#a6a0af", deadline: "" }];
   const rows = allProjects.filter((project) => {
     if (project.id === "__uncategorized") return tasks.some((task) => task.projectIds.length === 0);
@@ -339,31 +350,28 @@ function renderOverviewTimeline(tasks) {
     if (project.deadline) events.push({ date: project.deadline, kind: "project", label: "Project deadline" });
     const datedEvents = events.filter((event) => {
       event.offset = dateOffset(event.date, start);
-      return event.offset >= 0 && event.offset < 28;
+      return event.offset >= 0 && event.offset < TIMELINE_DAYS;
     }).sort((a, b) => a.offset - b.offset);
-    const laneEnds = [];
+    const dayLanes = Array(TIMELINE_DAYS).fill(0);
     const markers = datedEvents.map((event) => {
-      // Reserve label space so nearby dates use separate lanes.
-      const markerStart = event.offset >= 22 ? event.offset - 7 : event.offset;
-      let lane = laneEnds.findIndex((lastEnd) => lastEnd <= markerStart);
-      if (lane < 0) lane = laneEnds.length;
-      laneEnds[lane] = event.offset >= 22 ? event.offset + 1 : event.offset + 7;
+      // Stack items within their day, keeping each label under its date.
+      const lane = dayLanes[event.offset]++;
       const isTaskSelected = Boolean(event.task && ui.selectedTaskId === event.task.id);
       const action = event.task ? "select-task" : "select-project";
       const id = event.task?.id || project.id;
       return `<button class="overview-event ${event.kind} ${isTaskSelected ? "is-selected" : ""} ${ui.selectedTaskId && !isTaskSelected ? "is-muted" : ""}"
-        style="left:${((event.offset + 0.5) / 28) * 100}%;top:${7 + lane * 28}px"
+        style="left:calc(${(event.offset / TIMELINE_DAYS) * 100}% + 6px);top:${7 + lane * 28}px"
         data-action="${action}" data-id="${escapeHtml(id)}" data-kind="${event.kind}" data-date="${escapeHtml(event.date)}"
         aria-pressed="${isTaskSelected || (!event.task && isSelected)}"
         aria-label="${escapeHtml(event.label + ", " + formatDate(event.date, { year: true }))}"
         title="${escapeHtml(event.label + " · " + formatDate(event.date, { year: true }))}">
-        <i></i><span class="${event.offset >= 22 ? "label-left" : ""}">${escapeHtml(event.label)}</span>
+        <i></i><span>${escapeHtml(event.label)}</span>
       </button>`;
     }).join("");
     const hasDates = events.length > 0;
     return `<div class="overview-row ${isSelected ? "is-selected" : ""} ${hasSelection && !isSelected ? "is-muted" : ""}" data-project="${escapeHtml(project.id)}">
       <button class="overview-project-label" data-action="select-project" data-id="${escapeHtml(project.id)}" aria-pressed="${isSelected}"><i class="project-dot" style="background:${escapeHtml(project.color)}"></i><span>${escapeHtml(project.name)}</span></button>
-      <div class="overview-track" style="height:${Math.max(48, laneEnds.length * 28 + 15)}px">${todayLine}${markers}
+      <div class="overview-track" style="height:${Math.max(48, Math.max(...dayLanes) * 28 + 15)}px">${todayLine}${markers}
         ${!datedEvents.length ? `<span class="timeline-no-date">${hasDates ? "No dates in this period" : "No dates yet"}</span>` : ""}
       </div>
     </div>`;
@@ -372,15 +380,15 @@ function renderOverviewTimeline(tasks) {
     <div class="overview-toolbar">
       <h3>Timeline</h3>
       <div class="timeline-controls">
-        <button class="icon-button" data-action="timeline-prev" aria-label="Previous four weeks"><span data-icon="left"></span></button>
-        <span>${escapeHtml(formatDate(toDateInput(start), { year: true }))} – ${escapeHtml(formatDate(toDateInput(end), { year: true }))}</span>
-        <button class="icon-button" data-action="timeline-next" aria-label="Next four weeks"><span data-icon="right"></span></button>
+        <button class="icon-button" data-action="timeline-prev" aria-label="Scroll back one week"><span data-icon="left"></span></button>
+        <span class="timeline-period"></span>
+        <button class="icon-button" data-action="timeline-next" aria-label="Scroll forward one week"><span data-icon="right"></span></button>
         <button class="text-button" data-action="timeline-today">Today</button>
       </div>
     </div>
     <div class="overview-scroll" tabindex="0" aria-label="Scroll timeline horizontally">
-      <div class="overview-grid">
-        <div class="overview-axis"><span>Project</span><div>${weeks}</div></div>
+      <div class="overview-grid" style="--timeline-days:${TIMELINE_DAYS};--timeline-day-width:${TIMELINE_DAY_WIDTH}px">
+        <div class="overview-axis"><span>Project</span><div>${days}</div></div>
         ${rows || '<p class="timeline-empty">Your projects and dated tasks will appear here.</p>'}
       </div>
     </div>
@@ -390,9 +398,39 @@ function renderOverviewTimeline(tasks) {
 
 function focusTimeline(dateString) {
   if (!dateString) return;
-  const start = weekStart(ui.timelineCursor);
+  const start = timelineStart();
   const offset = dateOffset(dateString, start);
-  if (offset < 0 || offset >= 28) ui.timelineCursor = fromDateInput(dateString);
+  if (offset < 0 || offset >= TIMELINE_DAYS) ui.timelineCursor = fromDateInput(dateString);
+}
+
+function updateTimelinePeriod(scroll) {
+  const labelWidth = scroll.querySelector(".overview-axis > span").offsetWidth;
+  const firstDay = Math.floor(scroll.scrollLeft / TIMELINE_DAY_WIDTH);
+  const lastDay = Math.ceil((scroll.scrollLeft + scroll.clientWidth - labelWidth) / TIMELINE_DAY_WIDTH) - 1;
+  const first = timelineStart();
+  const last = timelineStart();
+  first.setDate(first.getDate() + firstDay);
+  last.setDate(last.getDate() + Math.max(firstDay, lastDay));
+  scroll.closest(".overview-panel").querySelector(".timeline-period").textContent =
+    `${formatDate(toDateInput(first), { year: true })} – ${formatDate(toDateInput(last), { year: true })}`;
+}
+
+function scrollTimeline(event) {
+  const scroll = event.target;
+  if (!scroll.matches(".overview-scroll") || !scroll.isConnected) return;
+  const left = scroll.scrollLeft;
+  const edgeBuffer = 7 * TIMELINE_DAY_WIDTH;
+  const shift = left < edgeBuffer ? -TIMELINE_STEP
+    : scroll.scrollWidth - scroll.clientWidth - left < edgeBuffer ? TIMELINE_STEP : 0;
+  if (shift) {
+    ui.timelineCursor.setDate(ui.timelineCursor.getDate() + shift);
+    const template = document.createElement("template");
+    template.innerHTML = renderOverviewTimeline(activeTasks().sort(compareTasks));
+    // Keep the scroll container and the visible dates in place while recycling offscreen days.
+    scroll.replaceChildren(template.content.querySelector(".overview-grid"));
+    scroll.scrollLeft = left - shift * TIMELINE_DAY_WIDTH;
+  }
+  updateTimelinePeriod(scroll);
 }
 
 function revealTimelineSelection() {
@@ -1024,12 +1062,11 @@ content.addEventListener("click", (event) => {
     render();
   }
   if (action === "timeline-prev" || action === "timeline-next") {
-    ui.timelineCursor.setDate(ui.timelineCursor.getDate() + (action === "timeline-prev" ? -28 : 28));
-    render();
+    document.querySelector(".overview-scroll").scrollLeft += (action === "timeline-prev" ? -7 : 7) * TIMELINE_DAY_WIDTH;
   }
   if (action === "timeline-today") {
     ui.timelineCursor = new Date();
-    render();
+    render({ timelineScrollLeft: TIMELINE_STEP * TIMELINE_DAY_WIDTH });
   }
   if (action === "add-project") openProjectDialog();
   if (action === "edit-project") {
@@ -1073,6 +1110,12 @@ content.addEventListener("click", (event) => {
     ui.calendarMode = actionTarget.dataset.mode;
     render();
   }
+});
+
+content.addEventListener("scroll", scrollTimeline, true);
+window.addEventListener("resize", () => {
+  const scroll = document.querySelector(".overview-scroll");
+  if (scroll) updateTimelinePeriod(scroll);
 });
 
 [taskDialog, projectDialog, dataDialog, filterDialog].forEach((dialog) => {

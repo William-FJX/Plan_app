@@ -13,8 +13,9 @@ Open <http://127.0.0.1:4173>. Keep using this same address so the browser uses t
 
 ## Use the workspace
 
-- **All tasks** combines a four-week timeline and one list of projects and standalone to-dos. Type labels distinguish the entries; expand a project to see its tasks. Shared tasks appear under each linked project, but remain one saved task.
-- Click a project or task to highlight its dates. A task linked to several projects appears in each relevant timeline row. Use the arrows to browse other weeks; selecting a dated task outside the current period reveals it.
+- **All tasks** combines a daily timeline and one list of projects and standalone to-dos. Type labels distinguish the entries; expand a project to see its tasks. Shared tasks appear under each linked project, but remain one saved task.
+- The timeline opens with today as the first visible date. Scroll horizontally in either direction to keep browsing dates, or use the arrows to move one week. **Today** returns today to the left edge. Days are recycled offscreen to keep scrolling lightweight.
+- Click a project or task to highlight its dates. A task linked to several projects appears in each relevant timeline row; selecting a dated task outside the current period reveals it.
 - **Filter** sits on the list and combines project selection, overdue / next-seven-days / no-deadline options, and inclusive deadline date ranges. Filters and search affect only this list, never the timeline or its date window. Matching project groups open automatically.
 - Tasks sort by deadline, with undated tasks last. A project is ordered by its earliest active task or project deadline. Old importance flags no longer affect the interface or sorting.
 - An overdue notice appears above the timeline only while there is overdue work.
