@@ -8,7 +8,6 @@
         "id": "project-application",
         "name": "Graduate Applications",
         "description": "Applications, recommendation letters, and supporting materials.",
-        "deadline": "2026-12-01",
         "color": "#4aa8ff",
         "createdAt": "2026-01-01T12:00:00.000Z"
       }
@@ -26,7 +25,7 @@
         "subtasks": [
           { "id": "subtask-outline", "title": "Create outline", "completed": false }
         ],
-        "recurrence": { "type": "none", "interval": 1, "unit": "week", "weekdays": [] },
+        "recurrence": { "type": "none", "interval": 1, "unit": "week", "weekdays": [], "endDate": "" },
         "timeBlock": { "date": "2026-10-25", "start": "14:00", "end": "16:00" },
         "completed": false,
         "completedAt": "",
@@ -39,6 +38,7 @@
     "notes": [
       {
         "id": "note-example",
+        "title": "Lab questions",
         "text": "Ask the lab mentor which project example best shows independent work.",
         "createdAt": "2026-01-01T12:00:00.000Z"
       }

@@ -16,7 +16,6 @@
           <img class="brand-mark" src="assets/hina-halo.svg" alt="Hina-inspired halo">
           <div>
             <strong>Plan archive</strong>
-            <span class="brand-kicker">A little space for your day.</span>
           </div>
         </div>
 
@@ -40,13 +39,6 @@
         </nav>
 
         <div class="sidebar-footer">
-          <div class="local-badge">
-            <span class="status-dot"></span>
-            <div>
-              <strong>Your private space</strong>
-              <small>Saved in this browser</small>
-            </div>
-          </div>
           <button class="ghost-button full-width" id="open-data-button">
             <span data-icon="database"></span>
             Data &amp; backup
@@ -61,7 +53,6 @@
               <span data-icon="menu"></span>
             </button>
             <div>
-              <span class="eyebrow" id="page-eyebrow">YOUR DAY, AT A GLANCE</span>
               <h1 id="page-title">All tasks</h1>
             </div>
           </div>
@@ -90,7 +81,6 @@
       <form id="task-form">
         <div class="dialog-header">
           <div>
-            <span class="eyebrow">TASK RECORD</span>
             <h2 id="task-dialog-title">Create task</h2>
           </div>
           <button type="button" class="icon-button" data-close-dialog="task-dialog" aria-label="Close">
@@ -124,8 +114,11 @@
           </label>
 
           <fieldset class="field-group span-2">
-            <legend>Projects <small>Choose any number, or leave uncategorized.</small></legend>
-            <div class="project-checklist" id="task-project-list"></div>
+            <legend>Projects <small>Optional. A to-do can stand on its own.</small></legend>
+            <div class="project-checklist">
+              <label class="project-check"><input type="checkbox" id="task-no-project" checked><span>No project</span></label>
+              <div class="project-checklist" id="task-project-list"></div>
+            </div>
           </fieldset>
 
           <fieldset class="field-group span-2">
@@ -179,6 +172,11 @@
                   <option value="month">Month(s)</option>
                 </select>
               </label>
+              <label class="field repeat-end-field is-hidden">
+                <span>End date (optional)</span>
+                <input name="repeatEndDate" type="date" disabled>
+                <small class="field-hint">Includes this day. Leave blank to keep repeating.</small>
+              </label>
             </div>
             <div class="weekday-picker is-hidden" id="weekday-picker" aria-label="Repeat on weekdays">
               <label><input type="checkbox" value="1"><span>Mon</span></label>
@@ -203,7 +201,6 @@
       <form id="project-form">
         <div class="dialog-header">
           <div>
-            <span class="eyebrow">PROJECT FILE</span>
             <h2 id="project-dialog-title">Create project</h2>
           </div>
           <button type="button" class="icon-button" data-close-dialog="project-dialog" aria-label="Close">
@@ -218,10 +215,6 @@
           <label class="field span-2">
             <span>Description</span>
             <textarea name="description" rows="3" maxlength="500" placeholder="What outcome are you working toward?"></textarea>
-          </label>
-          <label class="field">
-            <span>Overall deadline</span>
-            <input name="deadline" type="date">
           </label>
           <label class="field">
             <span>Accent color</span>
@@ -241,7 +234,6 @@
     <dialog class="app-dialog data-dialog" id="data-dialog">
       <div class="dialog-header">
         <div>
-          <span class="eyebrow">LOCAL STORAGE</span>
           <h2>Data &amp; backup</h2>
         </div>
         <button type="button" class="icon-button" data-close-dialog="data-dialog" aria-label="Close">

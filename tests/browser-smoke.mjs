@@ -39,20 +39,28 @@ try {
 
   const initialTitle = await evaluate("document.querySelector('#page-title').textContent");
   assert(initialTitle === "All tasks", "The initial All tasks view did not render.");
+  assert(await evaluate("!document.querySelector('.brand-kicker, .eyebrow, .local-badge, .selection-bar')"), "Decorative captions must be removed without empty placeholder rows.");
   assert(await evaluate("document.querySelectorAll('.task-row').length") === 0, "Fresh storage should start with no tasks.");
   assert(await evaluate("(() => { const message = document.querySelector('.timeline-empty').getBoundingClientRect(); const scroll = document.querySelector('.overview-scroll').getBoundingClientRect(); return message.left >= scroll.left && message.right <= scroll.right; })()"), "An empty timeline must keep its hint in view.");
+  await evaluate("document.querySelector('.workspace-list [data-action=add-task]').click(); true");
+  assert(await evaluate("document.querySelector('#task-no-project').checked && !document.querySelector('#task-project-list input')"), "A new to-do must work before any projects exist.");
+  await evaluate("document.querySelector('#task-form').elements.title.value = 'Standalone without projects'; document.querySelector('#task-form').requestSubmit(); true");
+  assert(await evaluate("document.querySelectorAll('.mixed-list > .task-row').length") === 1, "A standalone to-do must appear directly in the combined list.");
+  assert(await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).tasks[0].projectIds.length") === 0, "No project must save an empty project list, not a fake project ID.");
+  await evaluate("localStorage.clear(); location.reload(); true");
+  await waitFor(() => evaluate("document.readyState === 'complete' && Boolean(document.querySelector('.workspace-list')) && !document.querySelector('.task-row')"));
 
   await evaluate(`(() => {
     document.querySelector('[data-action="add-project"]').click();
     const form = document.querySelector('#project-form');
     form.elements.name.value = 'Graduate Applications';
     form.elements.description.value = 'Track schools, writing, and recommendation letters.';
-    form.elements.deadline.value = '2026-12-01';
     form.elements.color.value = '#4aa8ff';
     form.requestSubmit();
     return true;
   })()`);
   assert(await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).projects.length") === 1, "Project creation did not persist.");
+  assert(await evaluate("!document.querySelector('#project-form [name=deadline]')"), "Projects must not have a deadline field.");
 
   await evaluate(`(() => {
     document.querySelector('#add-task-button').click();
@@ -63,7 +71,7 @@ try {
     form.elements.blockDate.value = '2026-10-25';
     form.elements.blockStart.value = '14:00';
     form.elements.blockEnd.value = '16:00';
-    document.querySelector('#task-project-list input').checked = true;
+    document.querySelector('#task-project-list input').click();
     document.querySelector('#subtask-editor input[type="text"]').value = 'Create outline';
     form.requestSubmit();
     return true;
@@ -74,6 +82,7 @@ try {
 
   await evaluate("document.querySelector('[data-view=calendar]').click(); true");
   assert(await evaluate("Boolean(document.querySelector('.week-calendar'))"), "Default week calendar did not render.");
+  assert(await evaluate("document.querySelector('#page-title').textContent === 'Calendar' && !document.querySelector('.view-header')"), "Calendar must keep its title without a decorative subtitle.");
 
   await evaluate(`(() => {
     document.querySelector('[data-view=notes]').click();
@@ -83,13 +92,84 @@ try {
     return true;
   })()`);
   assert(await evaluate("document.querySelectorAll('.note-card').length") === 1, "Timestamped note did not render.");
+  assert(await evaluate("document.querySelector('#page-title').textContent === 'Quick notes' && !document.querySelector('.view-header, .note-composer > p')"), "Notes must keep their content without decorative helper lines.");
+  assert(await evaluate("!document.querySelector('#note-form').elements.noteTitle.required && !document.querySelector('.note-card h3') && JSON.parse(localStorage.getItem('plan-archive-state-v1')).notes[0].title === ''"), "A note must save without a title or an empty heading.");
+  await evaluate(`(() => {
+    const form = document.querySelector('#note-form');
+    form.elements.noteTitle.value = '  Lab questions <draft> & ideas  ';
+    form.elements.noteText.value = 'Discuss the next experiment.';
+    form.requestSubmit();
+    return true;
+  })()`);
+  assert(await evaluate("document.querySelector('.note-card h3').textContent === 'Lab questions <draft> & ideas' && !document.querySelector('.note-card draft')"), "A title must be trimmed and rendered as plain text.");
+  assert(await evaluate("document.querySelector('#note-form').elements.noteTitle.value === '' && document.querySelector('#note-form').elements.noteText.value === ''"), "Saving must clear both note fields.");
+  await send("Page.reload", { ignoreCache: true });
+  await waitFor(() => evaluate("Boolean(document.querySelector('.workspace-list'))"));
+  await evaluate("document.querySelector('[data-view=notes]').click(); true");
+  assert(await evaluate("document.querySelectorAll('.note-card').length === 2 && document.querySelector('.note-card h3').textContent === 'Lab questions <draft> & ideas'"), "Titled and untitled notes must survive reload.");
+  for (const query of ['IDEAS', 'experiment']) {
+    await evaluate(`(() => {
+      const search = document.querySelector('#search-input');
+      search.value = ${JSON.stringify(query)};
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`);
+    assert(await evaluate("document.querySelectorAll('.note-card').length === 1 && Boolean(document.querySelector('.note-card h3'))"), "Search must match a note's title or body, ignoring case.");
+  }
+  await evaluate("document.querySelector('#search-input').value = ''; document.querySelector('#search-input').dispatchEvent(new Event('input', { bubbles: true })); true");
+  await screenshot("notes-titles");
+  const notesBeforeEdit = await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).notes");
+  const editedNote = notesBeforeEdit.find(note => note.title);
+  await evaluate("document.querySelector('.note-card h3').closest('article').querySelector('[data-action=edit-note]').click(); true");
+  assert(await evaluate("document.querySelector('#note-form').elements.noteTitle.value === 'Lab questions <draft> & ideas' && document.querySelector('#note-form').elements.noteText.value === 'Discuss the next experiment.'"), "Edit must populate the existing title and text.");
+  await screenshot("notes-edit");
+  await evaluate("document.querySelector('#note-form').elements.noteTitle.value = 'Discarded title'; document.querySelector('#note-form').elements.noteText.value = 'Discarded changes'; document.querySelector('[data-action=cancel-note-edit]').click(); true");
+  assert(JSON.stringify(await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).notes")) === JSON.stringify(notesBeforeEdit), "Cancel must not change any saved note.");
+  assert(await evaluate("document.querySelector('#note-form').elements.noteTitle.value === '' && !document.querySelector('[data-action=cancel-note-edit]')"), "Cancel must return to a blank new-note form.");
+  await evaluate("document.querySelector('.note-card h3').closest('article').querySelector('[data-action=edit-note]').click(); document.querySelector('#note-form').elements.noteText.value = '   '; document.querySelector('#note-form').requestSubmit(); true");
+  assert(JSON.stringify(await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).notes")) === JSON.stringify(notesBeforeEdit), "An empty edited body must not overwrite saved content.");
+  await evaluate("document.querySelector('#note-form').elements.noteTitle.value = ''; document.querySelector('#note-form').elements.noteText.value = 'Bring the updated experiment results.'; document.querySelector('#note-form').requestSubmit(); true");
+  const notesAfterEdit = await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).notes");
+  const savedEdit = notesAfterEdit.find(note => note.id === editedNote.id);
+  assert(notesAfterEdit.length === notesBeforeEdit.length && savedEdit.title === '' && savedEdit.text === 'Bring the updated experiment results.' && savedEdit.createdAt === editedNote.createdAt, "Editing must update in place, allow title removal, and keep the original timestamp.");
+  assert(!await evaluate("Boolean(document.querySelector('.note-card h3'))"), "Removing a title must remove its heading.");
+  await evaluate(`document.querySelector('[data-action=edit-note][data-id="${editedNote.id}"]').click(); document.querySelector('#note-form').elements.noteTitle.value = 'Lab follow-up'; document.querySelector('#note-form').requestSubmit(); true`);
+  await send("Page.reload", { ignoreCache: true });
+  await waitFor(() => evaluate("Boolean(document.querySelector('.workspace-list'))"));
+  await evaluate("document.querySelector('[data-view=notes]').click(); true");
+  assert(await evaluate("document.querySelector('.note-card h3').textContent === 'Lab follow-up' && document.querySelector('.note-card h3').closest('article').querySelector('p').textContent === 'Bring the updated experiment results.'"), "Edited notes must survive reload.");
 
-  await evaluate("document.querySelector('[data-view=tasks]').click(); document.querySelector('.complete-button').click(); true");
+  await evaluate("document.querySelector('[data-view=tasks]').click(); document.querySelector('.project-toggle[aria-expanded=false]')?.click(); document.querySelector('.complete-button').click(); true");
   assert(await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).tasks[0].archived") === true, "Completing a task did not archive it.");
   await evaluate("document.querySelector('[data-view=archive]').click(); true");
   assert(await evaluate("document.querySelectorAll('.archive-row').length") === 1, "Archived task did not appear in Archive.");
+  assert(await evaluate("document.querySelector('#page-title').textContent === 'Archive' && !document.querySelector('.view-header')"), "Archive must keep its title without a decorative subtitle.");
   await evaluate("document.querySelector('.archive-row [data-action=restore-task]').click(); true");
   assert(await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).tasks[0].archived") === false, "Task restore did not persist.");
+
+  await evaluate("document.querySelector('[data-view=tasks]').click(); document.querySelector('.workspace-list [data-action=add-task]').click(); true");
+  assert(await evaluate("document.querySelector('#task-no-project').checked && !document.querySelector('#task-project-list input:checked')"), "General New to-do must not inherit the highlighted project.");
+  await evaluate(`(async () => {
+    const { toDateInput } = await import('/src/model.js');
+    const form = document.querySelector('#task-form');
+    form.elements.title.value = 'Independent errand';
+    form.elements.dueDate.value = toDateInput(new Date());
+    form.requestSubmit();
+    return true;
+  })()`);
+  assert(await evaluate("document.querySelector('.mixed-list > .task-row').textContent.includes('Independent errand')"), "Standalone creation must remain available when projects exist.");
+  assert(await evaluate("Boolean(document.querySelector('.overview-row[data-project=__uncategorized] .overview-event'))"), "A standalone deadline must appear on the timeline.");
+  await evaluate("document.querySelector('.mixed-list > .task-row [data-action=edit-task]').click(); document.querySelector('#task-project-list input').click(); true");
+  assert(await evaluate("!document.querySelector('#task-no-project').checked"), "Choosing a project must deselect No project.");
+  await evaluate("document.querySelector('#task-no-project').click(); true");
+  assert(await evaluate("!document.querySelector('#task-project-list input:checked')"), "No project must clear project membership.");
+  await screenshot("standalone-dialog");
+  await evaluate("document.querySelector('#task-form').requestSubmit(); document.querySelector('[data-action=project-add-task]').click(); true");
+  assert(await evaluate("!document.querySelector('#task-no-project').checked && Boolean(document.querySelector('#task-project-list input:checked'))"), "Add to-do inside a project must still preset that project.");
+  await evaluate("document.querySelector('#task-no-project').click(); document.querySelector('#task-form').elements.title.value = 'Personal reminder'; document.querySelector('#task-form').requestSubmit(); true");
+  await send("Page.reload", { ignoreCache: true });
+  await waitFor(() => evaluate("document.querySelectorAll('.mixed-list > .task-row').length === 2"));
+  assert(await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).tasks.filter(task => task.projectIds.length === 0).length") === 2, "Standalone tasks must remain standalone after reload.");
 
   // Seed representative data in this disposable Chrome profile.
   await evaluate(`(async () => {
@@ -122,6 +202,7 @@ try {
   assert(await evaluate("Boolean(document.querySelector('.overdue-notice'))"), "Overdue work needs a notice.");
   assert(await evaluate("!document.querySelector('.stat-card, [data-view=soon], [name=important], .project-directory, .todo-section')"), "Removed UI should not be present.");
   assert(await evaluate("document.querySelectorAll('.overview-row').length") === 5, "Timeline must combine projects and uncategorized work.");
+  assert(await evaluate("!document.querySelector('.overview-event[data-kind=project], .project-row .task-meta') && !document.querySelector('.timeline-legend').textContent.includes('Project deadline')"), "Legacy project deadlines must not appear in the list or timeline.");
   const dayHeaders = await evaluate("[...document.querySelectorAll('.overview-axis [data-date]')].map(day => day.dataset.date)");
   assert(dayHeaders.length === 84 && dayHeaders.every((day, index) => !index || Date.parse(day) - Date.parse(dayHeaders[index - 1]) === 86400000), "Timeline must label every consecutive day, including month boundaries.");
   const today = await evaluate("(async () => { const { toDateInput } = await import('/src/model.js'); return toDateInput(new Date()); })()");
@@ -139,6 +220,15 @@ try {
     const second = document.querySelector('.overview-event[data-id=labfollowup]').getBoundingClientRect();
     return Math.abs(first.left - second.left) < 1 && first.bottom <= second.top;
   })()`), "Deadlines on the same day must stack without overlapping.");
+  assert(await evaluate(`(() => {
+    const event = document.querySelector('.overview-event[data-id=shared]');
+    const label = getComputedStyle(event.querySelector('span'));
+    const row = document.querySelector('.overview-row[data-project=applications]');
+    return parseFloat(getComputedStyle(event).fontSize) >= 13
+      && label.webkitLineClamp === '2'
+      && label.whiteSpace !== 'nowrap'
+      && row.getBoundingClientRect().height <= 46;
+  })()`), "Timeline labels need larger, two-line text in compact rows.");
   assert(await evaluate("document.querySelectorAll('.mixed-list > .project-group').length") === 4, "Projects must share the list with standalone tasks.");
   assert(await evaluate("document.querySelectorAll('.mixed-list > .task-row').length") === 2, "Only standalone tasks belong at the root.");
   assert(await evaluate("document.querySelectorAll('.project-toggle[aria-expanded=false]').length") === 4, "Project groups should start collapsed.");
@@ -185,6 +275,12 @@ try {
   await evaluate("document.querySelector('.project-toggle[data-id=applications]').click(); true");
   assert(await evaluate("document.querySelector('.overview-row[data-project=applications]').classList.contains('is-selected')"), "Project selection must highlight its timeline row.");
   assert(await evaluate("document.querySelectorAll('[data-project-id=applications] .task-row').length") === 2, "Expanding a project must reveal its tasks.");
+  assert(await evaluate(`(() => {
+    const rows = document.querySelectorAll('[data-project-id=applications] .task-row');
+    return rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().bottom >= 4;
+  })()`), "Adjacent highlighted task rows must have a visible gap.");
+  assert(await evaluate("getComputedStyle(document.querySelector('.overview-row.is-selected')).boxShadow !== 'none'"), "Timeline highlights need inset edges to stay visually separate.");
+  await screenshot("project-highlight");
   assert(await evaluate("document.querySelectorAll('.project-group').length") === 4, "Expanding must not hide other projects.");
   await evaluate("document.querySelector('.project-toggle[data-id=applications]').click(); true");
   assert(await evaluate("document.querySelector('.project-toggle[data-id=applications]').getAttribute('aria-expanded')") === "false", "Project must collapse again.");
@@ -198,8 +294,9 @@ try {
   await evaluate("document.querySelector('.task-copy[data-id=distant]').click(); true");
   assert(await evaluate("Boolean(document.querySelector('.overview-event[data-id=distant].is-selected'))"), "Selecting distant work should reveal its date.");
   await evaluate("document.querySelector('.task-copy[data-id=undated]').click(); true");
-  assert(await evaluate("document.querySelector('.selection-bar').textContent.includes('No date assigned')"), "Undated task selection must explain the missing timeline marker.");
+  assert(await evaluate("!document.querySelector('.selection-bar') && Boolean(document.querySelector('.workspace-list [data-action=clear-selection]'))"), "Selection must remain clearable without the helper line.");
   await evaluate("document.querySelector('[data-action=clear-selection]').click(); document.querySelector('[data-action=timeline-today]').click(); true");
+  assert(await evaluate("!document.querySelector('.overview-row.is-selected, .overview-event.is-selected, .task-row.is-selected, [data-action=clear-selection]')"), "Clear selection must remove highlights and its temporary control.");
   await assertTodayFirst(today);
   const timelineBeforeFilters = await evaluate("document.querySelector('.overview-panel').innerHTML");
 
@@ -290,6 +387,18 @@ try {
   assert(await evaluate("getComputedStyle(document.querySelector('.mobile-add-button')).display") === "grid", "Mobile create-task button is not visible.");
   await screenshot("mobile");
   await assertTodayFirst(today);
+  await evaluate("document.querySelector('.overview-scroll').scrollLeft += 3 * 124; true");
+  assert(await evaluate(`(() => {
+    const event = document.querySelector('.overview-event[data-id=shared]');
+    const label = event.querySelector('span').getBoundingClientRect();
+    const bounds = event.getBoundingClientRect();
+    const scroll = document.querySelector('.overview-scroll').getBoundingClientRect();
+    return parseFloat(getComputedStyle(event).fontSize) >= 13
+      && bounds.left >= scroll.left + 135 && bounds.right <= scroll.right
+      && label.top >= bounds.top && label.bottom <= bounds.bottom;
+  })()`), "Mobile timeline labels must remain readable and contained in their day.");
+  await screenshot("mobile-timeline-labels");
+  await evaluate("document.querySelector('[data-action=timeline-today]').click(); true");
   await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
   const touchY = await evaluate("document.querySelector('.overview-scroll').getBoundingClientRect().top + 60");
   await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 345, y: touchY }] });
@@ -320,6 +429,111 @@ try {
   await evaluate("document.querySelector('[data-action=open-filters]').click(); document.querySelector('#filter-form').elements.status.value = 'undated'; document.querySelector('#filter-form').requestSubmit(); true");
   assert(await evaluate("document.querySelector('.overview-scroll').scrollLeft") === mobileTimelineScroll, "List filtering must preserve the mobile timeline scroll position.");
   assert(await evaluate("document.querySelectorAll('.overview-row').length") === 5, "Mobile list filtering must keep all timeline rows.");
+  await evaluate("document.querySelector('[data-action=clear-filters]').click(); document.querySelector('.workspace-list [data-action=add-task]').click(); true");
+  assert(await evaluate("document.querySelector('#task-dialog').open && document.querySelector('#task-no-project').checked"), "Mobile list must offer a standalone to-do without a project.");
+  await screenshot("mobile-standalone-dialog");
+  await evaluate("document.querySelector('#task-form').elements.title.value = 'Phone reminder'; document.querySelector('#task-form').requestSubmit(); true");
+  assert(await evaluate("[...document.querySelectorAll('.mixed-list > .task-row')].some(row => row.textContent.includes('Phone reminder'))"), "Mobile standalone creation must show the saved task in the root list.");
+
+  // A recurring task remains one saved active item while its future dates are previewed.
+  await evaluate(`(async () => {
+    const { toDateInput } = await import('/src/model.js');
+    document.querySelector('[data-action=timeline-today]').click();
+    document.querySelector('.workspace-list [data-action=add-task]').click();
+    const form = document.querySelector('#task-form');
+    form.elements.title.value = 'Daily recurring review';
+    form.elements.dueDate.value = toDateInput(new Date());
+    form.elements.repeatType.value = 'daily';
+    form.elements.repeatType.dispatchEvent(new Event('change'));
+    const before = new Date(); before.setDate(before.getDate() - 1);
+    form.elements.repeatEndDate.value = toDateInput(before);
+    form.requestSubmit();
+    return true;
+  })()`);
+  assert(await evaluate("document.querySelector('#task-dialog').open && !document.querySelector('#task-form').elements.repeatEndDate.disabled"), "An end date before the first occurrence must be rejected.");
+  assert(await evaluate("!JSON.parse(localStorage.getItem('plan-archive-state-v1')).tasks.some(task => task.title === 'Daily recurring review')"), "Invalid recurrence must not save.");
+  const repeatEnd = await evaluate(`(async () => {
+    const { toDateInput } = await import('/src/model.js');
+    const last = new Date(); last.setDate(last.getDate() + 4);
+    const end = toDateInput(last);
+    document.querySelector('#task-form').elements.repeatEndDate.value = end;
+    return end;
+  })()`);
+  await evaluate("document.querySelector('.repeat-end-field').scrollIntoView({ block: 'center' }); true");
+  await screenshot("mobile-repeat-end");
+  await evaluate("document.querySelector('#task-form').requestSubmit(); true");
+  const recurringId = await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).tasks.find(task => task.title === 'Daily recurring review').id");
+  let previewDates = await evaluate(`Array.from(document.querySelectorAll('.overview-event[data-id="${recurringId}"]'), event => event.dataset.date)`);
+  assert(previewDates.length === 5 && previewDates[0] === today && previewDates.at(-1) === repeatEnd, "Timeline must show all five dates through the inclusive repeat end.");
+  assert(await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).tasks.filter(task => task.title === 'Daily recurring review').length") === 1, "Timeline previews must not save duplicate tasks.");
+  await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await evaluate("document.querySelector('[data-action=timeline-today]').click(); window.scrollTo(0, 0); true");
+  await screenshot("recurring-timeline");
+  await evaluate(`document.querySelectorAll('.overview-event[data-id="${recurringId}"]')[3].click(); true`);
+  assert(await evaluate(`(() => {
+    const marker = document.querySelectorAll('.overview-event[data-id="${recurringId}"]')[3];
+    const rect = marker.getBoundingClientRect();
+    const scroll = document.querySelector('.overview-scroll').getBoundingClientRect();
+    return marker.classList.contains('is-selected') && rect.left >= scroll.left + 170 && rect.right <= scroll.right;
+  })()`), "Selecting a future recurrence must reveal that date, not jump to the first occurrence.");
+  await evaluate(`document.querySelector('[data-action=edit-task][data-id="${recurringId}"]').click(); true`);
+  assert(await evaluate("document.querySelector('#task-form').elements.repeatEndDate.value") === repeatEnd, "Editing must retain the repeat end date.");
+  await evaluate("document.querySelector('#task-form').elements.repeatEndDate.value = ''; document.querySelector('#task-form').requestSubmit(); true");
+  previewDates = await evaluate(`Array.from(document.querySelectorAll('.overview-event[data-id="${recurringId}"]'), event => event.dataset.date)`);
+  assert(previewDates.length > 5, "A blank end date must preview ongoing repeats.");
+  const lastPreview = previewDates.at(-1);
+  await evaluate("const recurringScroll = document.querySelector('.overview-scroll'); recurringScroll.scrollLeft = recurringScroll.scrollWidth - recurringScroll.clientWidth - 100; recurringScroll.dispatchEvent(new Event('scroll')); true");
+  assert(await evaluate(`Array.from(document.querySelectorAll('.overview-event[data-id="${recurringId}"]'), event => event.dataset.date).at(-1) > '${lastPreview}'`), "More occurrences must appear as the timeline scrolls into later dates.");
+  await evaluate(`document.querySelector('[data-action=edit-task][data-id="${recurringId}"]').click(); document.querySelector('#task-form').elements.repeatEndDate.value = '${repeatEnd}'; document.querySelector('#task-form').requestSubmit(); document.querySelector('[data-action=timeline-today]').click(); true`);
+  await send("Page.reload", { ignoreCache: true });
+  await waitFor(() => evaluate(`document.querySelectorAll('.overview-event[data-id="${recurringId}"]').length === 5`));
+  for (let remaining = 4; remaining >= 0; remaining -= 1) {
+    await evaluate(`(() => {
+      const task = JSON.parse(localStorage.getItem('plan-archive-state-v1')).tasks.find(task => task.title === 'Daily recurring review' && !task.archived);
+      document.querySelector('[data-action=complete-task][data-id="' + task.id + '"]').click();
+      return true;
+    })()`);
+    assert(await evaluate("document.querySelectorAll('.overview-event[title^=\"Daily recurring review\"]').length") === remaining, "Completion must advance previews without duplicates and stop at the end date.");
+  }
+  assert(await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).tasks.filter(task => task.title === 'Daily recurring review' && !task.archived).length") === 0, "Completing the final occurrence must not create another task.");
+  await evaluate(`(async () => {
+    const { toDateInput } = await import('/src/model.js');
+    const date = offset => { const value = new Date(); value.setDate(value.getDate() + offset); return toDateInput(value); };
+    document.querySelector('.workspace-list [data-action=add-task]').click();
+    const form = document.querySelector('#task-form');
+    form.elements.title.value = 'Weekly lab block';
+    form.elements.blockDate.value = date(1);
+    form.elements.blockStart.value = '10:00';
+    form.elements.blockEnd.value = '11:00';
+    form.elements.repeatType.value = 'weekly';
+    form.elements.repeatType.dispatchEvent(new Event('change'));
+    form.elements.repeatEndDate.value = date(15);
+    form.requestSubmit();
+    return true;
+  })()`);
+  assert(await evaluate("document.querySelectorAll('.overview-event.block[title^=\"Weekly lab block\"]').length") === 3, "Time-block-only events must preview every week through the end date.");
+
+  await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await evaluate("document.querySelector('[data-view=notes]').click(); window.scrollTo(0, 0); true");
+  assert(await evaluate("document.querySelectorAll('.note-card').length === 1 && !document.querySelector('.note-card h3') && document.querySelector('.note-card p').textContent === 'Ask about next semester’s lab schedule.'"), "Legacy untitled notes must remain readable on mobile.");
+  await evaluate(`(() => {
+    const form = document.querySelector('#note-form');
+    form.elements.noteTitle.value = 'Ideas for next semester — research, applications, and a better weekly routine';
+    form.elements.noteText.value = 'Keep one afternoon free for deep work.';
+    form.requestSubmit();
+    return true;
+  })()`);
+  assert(await evaluate("document.querySelectorAll('.note-card').length === 2 && Boolean(document.querySelector('.note-card h3')) && document.documentElement.scrollWidth <= window.innerWidth + 1 && getComputedStyle(document.querySelector('[name=noteTitle]')).fontSize === '16px'"), "Mobile title entry and long note headings must fit the screen.");
+  await waitFor(() => evaluate("!document.querySelector('.toast')"));
+  await screenshot("mobile-note-titles");
+  const legacyNoteTime = await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).notes.find(note => note.id === 'note').createdAt");
+  await evaluate("document.querySelector('[data-action=edit-note][data-id=note]').click(); true");
+  assert(await evaluate("document.querySelector('#note-form').elements.noteTitle.value === '' && document.querySelector('#note-form').elements.noteText.value === 'Ask about next semester’s lab schedule.'"), "Mobile editing must also support legacy notes with no title.");
+  await evaluate("document.querySelector('#note-form').elements.noteTitle.value = 'Lab schedule'; document.querySelector('#note-form').elements.noteText.value = 'Ask about next semester’s lab schedule and meeting times.'; true");
+  await screenshot("mobile-note-edit");
+  await evaluate("document.querySelector('#note-form').requestSubmit(); true");
+  const mobileNotes = await evaluate("JSON.parse(localStorage.getItem('plan-archive-state-v1')).notes");
+  assert(mobileNotes.length === 2 && mobileNotes.find(note => note.id === 'note').title === 'Lab schedule' && mobileNotes.find(note => note.id === 'note').createdAt === legacyNoteTime, "Mobile editing must update a legacy note without duplicating it or changing its timestamp.");
 
   if (process.env.QA_SCREENSHOTS) {
     await evaluate("document.querySelector('#filter-dialog').close(); const preview = document.createElement('img'); preview.src = '/assets/hina-halo.svg'; preview.style.cssText = 'width:360px;height:auto;display:block;margin:40px auto'; document.body.replaceChildren(preview); document.body.style.background = '#faf9fc'; true");
@@ -328,7 +542,7 @@ try {
   }
   assert(browserErrors.length === 0, `Browser runtime errors: ${browserErrors.join(" | ")}`);
   console.log(JSON.stringify({
-    desktop: { projectCreated: true, taskCreated: true, weekCalendar: true, noteCreated: true, archiveRestore: true, integratedTimeline: true, todayFirst: true, continuousScrolling: true, mixedList: true, projectDropdowns: true, sharedTaskHighlight: true, listOnlyFilters: true, haloLoaded: true, overdueNotice: true },
+    desktop: { projectCreated: true, projectsWithoutDeadlines: true, recurringTimeline: true, repeatEndDates: true, taskCreated: true, standaloneTasks: true, separatedHighlights: true, weekCalendar: true, noteCreated: true, optionalNoteTitles: true, archiveRestore: true, integratedTimeline: true, todayFirst: true, continuousScrolling: true, mixedList: true, projectDropdowns: true, sharedTaskHighlight: true, listOnlyFilters: true, haloLoaded: true, overdueNotice: true },
     mobile: { ...mobileViewport, menuOpened: true, createButtonVisible: true },
     browserErrors: 0,
   }, null, 2));

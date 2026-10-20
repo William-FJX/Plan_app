@@ -17,9 +17,11 @@ Open <http://127.0.0.1:4173>. Keep using this same address so the browser uses t
 - The timeline opens with today as the first visible date. Scroll horizontally in either direction to keep browsing dates, or use the arrows to move one week. **Today** returns today to the left edge. Days are recycled offscreen to keep scrolling lightweight.
 - Click a project or task to highlight its dates. A task linked to several projects appears in each relevant timeline row; selecting a dated task outside the current period reveals it.
 - **Filter** sits on the list and combines project selection, overdue / next-seven-days / no-deadline options, and inclusive deadline date ranges. Filters and search affect only this list, never the timeline or its date window. Matching project groups open automatically.
-- Tasks sort by deadline, with undated tasks last. A project is ordered by its earliest active task or project deadline. Old importance flags no longer affect the interface or sorting.
+- Projects are containers without their own deadlines. Tasks sort by deadline, with undated tasks last; projects are ordered by their earliest active task deadline. Old importance flags no longer affect the interface or sorting.
+- Repeating tasks can have an optional inclusive end date. The timeline previews every scheduled occurrence in the dates being browsed, including recurring time blocks. These previews do not create extra saved tasks; completing the current task advances to the next occurrence until the end date.
 - An overdue notice appears above the timeline only while there is overdue work.
 - Quick notes, calendar, archive, and JSON backups remain available from the navigation.
+- Notes can have an optional title and can be edited later without changing their original timestamp. Search matches both the title and the note text.
 
 The small, flat SVG halo is a Hina-inspired fan drawing based on the crown, diagonal stripes, side diamonds, and lower rings in [her official anime character art](https://sh-anime.shochiku.co.jp/bluearchive-anime/character/sorasaki-hina/). No character artwork is bundled with the app.
 

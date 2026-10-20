@@ -10,6 +10,7 @@ import {
   normalizeState,
   normalizeTask,
   taskDueStatus,
+  timelineOccurrences,
   toDateInput,
 } from "./model.js";
 
@@ -36,6 +37,7 @@ const ui = {
   search: "",
   editingTaskId: null,
   editingProjectId: null,
+  editingNoteId: null,
   selectedProjectId: null,
   expandedProjectIds: new Set(),
   calendarMode: "week",
@@ -43,10 +45,10 @@ const ui = {
 };
 
 const viewDetails = {
-  tasks: ["YOUR DAY, AT A GLANCE", "All tasks"],
-  calendar: ["A LITTLE ROOM FOR WHAT MATTERS", "Calendar"],
-  notes: ["THOUGHTS, AS THEY COME", "Quick notes"],
-  archive: ["FINISHED & FILED", "Archive"],
+  tasks: "All tasks",
+  calendar: "Calendar",
+  notes: "Quick notes",
+  archive: "Archive",
 };
 
 const iconPaths = {
@@ -185,9 +187,7 @@ function showToast(message) {
 function render(options = {}) {
   const timelineScrollLeft = options.timelineScrollLeft ?? document.querySelector(".overview-scroll")?.scrollLeft
     ?? TIMELINE_STEP * TIMELINE_DAY_WIDTH;
-  const details = viewDetails[ui.view] || viewDetails.tasks;
-  document.querySelector("#page-eyebrow").textContent = details[0];
-  document.querySelector("#page-title").textContent = details[1];
+  document.querySelector("#page-title").textContent = viewDetails[ui.view] || viewDetails.tasks;
   document.querySelectorAll(".nav-item").forEach((item) => {
     item.classList.toggle("is-active", item.dataset.view === ui.view);
   });
@@ -228,23 +228,18 @@ function filterDescription() {
 function renderTasksView() {
   const tasks = visibleTasks();
   const hasOverdue = activeTasks().some((task) => taskDueStatus(task) === "overdue");
-  const selectedTask = activeTasks().find((task) => task.id === ui.selectedTaskId);
-  const selectedProject = projectById(ui.selectedProjectId);
-  const selection = selectedTask?.title || selectedProject?.name || (ui.selectedProjectId === "__uncategorized" ? "Uncategorized" : "");
   return `
     ${hasOverdue ? `<div class="overdue-notice" role="status">
       <span data-icon="clock"></span><span>You have overdue tasks.</span>
       <button class="text-button" data-action="show-overdue">Review</button>
     </div>` : ""}
     ${renderOverviewTimeline(activeTasks().sort(compareTasks))}
-    <div class="selection-bar">
-      <span>${selection ? `Highlighting <strong>${escapeHtml(selection)}</strong>${selectedTask && !selectedTask.dueDate && !selectedTask.timeBlock.date ? " · No date assigned yet." : ""}` : "Select a project or task below to highlight it on the timeline."}</span>
-      ${selection ? '<button class="text-button" data-action="clear-selection">Clear selection</button>' : ""}
-    </div>
     <section class="workspace-list" aria-label="Projects and to-dos">
       <div class="section-heading">
         <h3>Projects &amp; to-dos</h3>
         <div class="list-controls">
+          ${ui.selectedTaskId || ui.selectedProjectId ? '<button class="icon-button" data-action="clear-selection" aria-label="Clear selection" title="Clear selection"><span data-icon="close"></span></button>' : ""}
+          <button class="text-button" data-action="add-task" aria-label="New to-do"><span data-icon="plus"></span>To-do</button>
           <button class="text-button" data-action="add-project"><span data-icon="plus"></span>Project</button>
           <button class="secondary-button ${hasFilters() ? "is-active" : ""}" data-action="open-filters" aria-haspopup="dialog">
             <span data-icon="filter"></span>${hasFilters() ? "Filters applied" : "Filter"}
@@ -265,8 +260,7 @@ function renderWorkspaceList(tasks) {
     const children = tasks.filter((task) => task.projectIds.includes(project.id));
     const deadlineFilter = ui.filters.status !== "all" || ui.filters.from || ui.filters.to;
     if (!children.length && (deadlineFilter || (ui.search && !project.name.toLowerCase().includes(ui.search)))) continue;
-    // Order a group by its next task or project deadline, whichever comes first.
-    const dates = [project.deadline, ...children.map((task) => task.dueDate)].filter(Boolean).sort();
+    const dates = children.map((task) => task.dueDate).filter(Boolean).sort();
     entries.push({ project, children, sortKey: { dueDate: dates[0] || "", createdAt: project.createdAt } });
   }
   entries.sort((a, b) => compareTasks(a.sortKey, b.sortKey));
@@ -287,8 +281,7 @@ function projectRow(project, tasks) {
         aria-expanded="${expanded}" aria-controls="project-tasks-${escapeHtml(project.id)}">
         <span class="project-chevron" data-icon="right"></span>
         <span class="project-copy">
-          <span class="task-title-line"><strong>${escapeHtml(project.name)}</strong><span class="entry-type">Project</span></span>
-          <span class="task-meta"><i class="project-dot" style="background:${escapeHtml(project.color)}"></i>${escapeHtml(formatDate(project.deadline, { year: true }))}</span>
+          <span class="task-title-line"><i class="project-dot" style="background:${escapeHtml(project.color)}"></i><strong>${escapeHtml(project.name)}</strong><span class="entry-type">Project</span></span>
         </span>
       </button>
       <button class="icon-button" data-action="edit-project" data-id="${escapeHtml(project.id)}" aria-label="Edit ${escapeHtml(project.name)}" title="Edit project"><span data-icon="edit"></span></button>
@@ -327,6 +320,10 @@ function timelineStart() {
 
 function renderOverviewTimeline(tasks) {
   const start = timelineStart();
+  const end = new Date(start);
+  end.setDate(end.getDate() + TIMELINE_DAYS - 1);
+  const occurrences = tasks.flatMap((task) => timelineOccurrences(task, toDateInput(start), toDateInput(end))
+    .map((occurrence) => ({ ...occurrence, task, label: task.title + (occurrence.kind === "block" ? " · " + formatClock(task.timeBlock.start) : "") })));
   const days = Array.from({ length: TIMELINE_DAYS }, (_, index) => {
     const date = new Date(start);
     date.setDate(date.getDate() + index);
@@ -334,7 +331,7 @@ function renderOverviewTimeline(tasks) {
   }).join("");
   const today = dateOffset(todayInput(), start);
   const todayLine = today >= 0 && today < TIMELINE_DAYS ? `<i class="today-line" style="left:${((today + 0.5) / TIMELINE_DAYS) * 100}%" title="Today"></i>` : "";
-  const allProjects = [...state.projects, { id: "__uncategorized", name: "Uncategorized", color: "#a6a0af", deadline: "" }];
+  const allProjects = [...state.projects, { id: "__uncategorized", name: "Uncategorized", color: "#a6a0af" }];
   const rows = allProjects.filter((project) => {
     if (project.id === "__uncategorized") return tasks.some((task) => task.projectIds.length === 0);
     return true;
@@ -343,35 +340,27 @@ function renderOverviewTimeline(tasks) {
     const selectedTask = tasks.find((task) => task.id === ui.selectedTaskId);
     const isSelected = ui.selectedProjectId === project.id || Boolean(selectedTask && taskMatchesProject(selectedTask, project.id));
     const hasSelection = ui.selectedProjectId || ui.selectedTaskId;
-    const events = projectTasks.flatMap((task) => [
-      ...(task.timeBlock.date ? [{ task, date: task.timeBlock.date, kind: "block", label: task.title + " · " + formatClock(task.timeBlock.start) }] : []),
-      ...(task.dueDate ? [{ task, date: task.dueDate, kind: "due", label: task.title }] : []),
-    ]);
-    if (project.deadline) events.push({ date: project.deadline, kind: "project", label: "Project deadline" });
-    const datedEvents = events.filter((event) => {
-      event.offset = dateOffset(event.date, start);
-      return event.offset >= 0 && event.offset < TIMELINE_DAYS;
-    }).sort((a, b) => a.offset - b.offset);
+    const datedEvents = occurrences.filter((event) => taskMatchesProject(event.task, project.id))
+      .map((event) => ({ ...event, offset: dateOffset(event.date, start) }))
+      .sort((a, b) => a.offset - b.offset);
     const dayLanes = Array(TIMELINE_DAYS).fill(0);
     const markers = datedEvents.map((event) => {
       // Stack items within their day, keeping each label under its date.
       const lane = dayLanes[event.offset]++;
-      const isTaskSelected = Boolean(event.task && ui.selectedTaskId === event.task.id);
-      const action = event.task ? "select-task" : "select-project";
-      const id = event.task?.id || project.id;
+      const isTaskSelected = ui.selectedTaskId === event.task.id;
       return `<button class="overview-event ${event.kind} ${isTaskSelected ? "is-selected" : ""} ${ui.selectedTaskId && !isTaskSelected ? "is-muted" : ""}"
-        style="left:calc(${(event.offset / TIMELINE_DAYS) * 100}% + 6px);top:${7 + lane * 28}px"
-        data-action="${action}" data-id="${escapeHtml(id)}" data-kind="${event.kind}" data-date="${escapeHtml(event.date)}"
-        aria-pressed="${isTaskSelected || (!event.task && isSelected)}"
+        style="left:calc(${(event.offset / TIMELINE_DAYS) * 100}% + 6px);top:${4 + lane * 38}px"
+        data-action="select-task" data-id="${escapeHtml(event.task.id)}" data-kind="${event.kind}" data-date="${escapeHtml(event.date)}"
+        aria-pressed="${isTaskSelected}"
         aria-label="${escapeHtml(event.label + ", " + formatDate(event.date, { year: true }))}"
         title="${escapeHtml(event.label + " · " + formatDate(event.date, { year: true }))}">
         <i></i><span>${escapeHtml(event.label)}</span>
       </button>`;
     }).join("");
-    const hasDates = events.length > 0;
+    const hasDates = projectTasks.some((task) => task.dueDate || task.timeBlock.date);
     return `<div class="overview-row ${isSelected ? "is-selected" : ""} ${hasSelection && !isSelected ? "is-muted" : ""}" data-project="${escapeHtml(project.id)}">
       <button class="overview-project-label" data-action="select-project" data-id="${escapeHtml(project.id)}" aria-pressed="${isSelected}"><i class="project-dot" style="background:${escapeHtml(project.color)}"></i><span>${escapeHtml(project.name)}</span></button>
-      <div class="overview-track" style="height:${Math.max(48, Math.max(...dayLanes) * 28 + 15)}px">${todayLine}${markers}
+      <div class="overview-track" style="height:${Math.max(44, Math.max(...dayLanes) * 38 + 6)}px">${todayLine}${markers}
         ${!datedEvents.length ? `<span class="timeline-no-date">${hasDates ? "No dates in this period" : "No dates yet"}</span>` : ""}
       </div>
     </div>`;
@@ -392,7 +381,7 @@ function renderOverviewTimeline(tasks) {
         ${rows || '<p class="timeline-empty">Your projects and dated tasks will appear here.</p>'}
       </div>
     </div>
-    <div class="timeline-legend"><span><i class="legend-dot"></i>Task deadline</span><span><i class="legend-block"></i>Time block</span><span><i class="legend-diamond"></i>Project deadline</span><span class="today-key">│ Today</span></div>
+    <div class="timeline-legend"><span><i class="legend-dot"></i>Task deadline</span><span><i class="legend-block"></i>Time block</span><span class="today-key">│ Today</span></div>
   </section>`;
 }
 
@@ -433,10 +422,11 @@ function scrollTimeline(event) {
   updateTimelinePeriod(scroll);
 }
 
-function revealTimelineSelection() {
+function revealTimelineSelection(date = "") {
   const panel = document.querySelector(".overview-panel");
   const scroll = document.querySelector(".overview-scroll");
-  const marker = panel?.querySelector(".overview-event.is-selected, .overview-row.is-selected .overview-event");
+  const marker = [...(panel?.querySelectorAll(".overview-event.is-selected") || [])].find((event) => event.dataset.date === date)
+    || panel?.querySelector(".overview-event.is-selected, .overview-row.is-selected .overview-event");
   if (marker && scroll) {
     const labelWidth = panel.querySelector(".overview-project-label").getBoundingClientRect().width;
     scroll.scrollLeft += marker.getBoundingClientRect().left - scroll.getBoundingClientRect().left
@@ -452,7 +442,7 @@ function selectTask(id, date) {
   ui.selectedProjectId = null;
   if (ui.selectedTaskId) focusTimeline(date || task.dueDate || task.timeBlock.date);
   render();
-  if (ui.selectedTaskId) revealTimelineSelection();
+  if (ui.selectedTaskId) revealTimelineSelection(date);
 }
 
 function openFilters() {
@@ -528,12 +518,6 @@ function renderCalendarView() {
     ? weekLabel(ui.calendarCursor)
     : new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(ui.calendarCursor);
   return `
-    <div class="view-header">
-      <div>
-        <h2>Your week, with a little breathing room.</h2>
-        <p>Deadlines appear as all-day markers. Optional time blocks place work into a specific hour.</p>
-      </div>
-    </div>
     <section class="panel calendar-shell">
       <div class="calendar-toolbar">
         <div class="calendar-controls">
@@ -652,29 +636,31 @@ function renderMonthCalendar() {
 }
 
 function renderNotesView() {
+  const editingNote = state.notes.find((note) => note.id === ui.editingNoteId);
   const notes = [...state.notes]
-    .filter((note) => !ui.search || note.text.toLowerCase().includes(ui.search))
+    .filter((note) => !ui.search || `${note.title}\n${note.text}`.toLowerCase().includes(ui.search))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   return `
-    <div class="view-header">
-      <div>
-        <h2>A place to put your thoughts.</h2>
-        <p>Write it down. Come back to it whenever you like.</p>
-      </div>
-    </div>
     <div class="notes-layout">
       <form class="panel note-composer" id="note-form">
-        <h3>Record a thought</h3>
-        <p>No title, category, or extra setup required.</p>
-        <textarea name="noteText" maxlength="4000" required placeholder="What is on your mind?"></textarea>
-        <button class="primary-button" type="submit"><span data-icon="journal"></span>Save note</button>
+        <h3>${editingNote ? "Edit note" : "Record a thought"}</h3>
+        <input name="noteTitle" maxlength="120" placeholder="Title (optional)" aria-label="Note title (optional)" value="${escapeHtml(editingNote?.title || "")}">
+        <textarea name="noteText" maxlength="4000" required placeholder="What is on your mind?">${escapeHtml(editingNote?.text || "")}</textarea>
+        <div class="note-form-actions">
+          ${editingNote ? '<button class="secondary-button" type="button" data-action="cancel-note-edit">Cancel</button>' : ""}
+          <button class="primary-button" type="submit"><span data-icon="journal"></span>${editingNote ? "Save changes" : "Save note"}</button>
+        </div>
       </form>
       <div class="note-list">
         ${notes.length ? notes.map((note) => `
           <article class="note-card">
+            ${note.title ? `<h3>${escapeHtml(note.title)}</h3>` : ""}
             <time datetime="${escapeHtml(note.createdAt)}">${escapeHtml(formatDateTime(note.createdAt))}</time>
             <p>${escapeHtml(note.text)}</p>
-            <button class="icon-button danger-button" data-action="delete-note" data-id="${escapeHtml(note.id)}" title="Delete note"><span data-icon="trash"></span></button>
+            <div class="note-actions">
+              <button class="icon-button" data-action="edit-note" data-id="${escapeHtml(note.id)}" aria-label="Edit note" title="Edit note"><span data-icon="edit"></span></button>
+              <button class="icon-button danger-button" data-action="delete-note" data-id="${escapeHtml(note.id)}" aria-label="Delete note" title="Delete note"><span data-icon="trash"></span></button>
+            </div>
           </article>
         `).join("") : `<section class="panel">${emptyState("journal", ui.search ? "No matching notes" : "No notes yet", ui.search ? "Try a different search phrase." : "Your first quick thought will appear here.")}</section>`}
       </div>
@@ -685,12 +671,6 @@ function renderNotesView() {
 function renderArchiveView() {
   const tasks = archivedTasks().filter(matchesSearch).sort((a, b) => new Date(b.archivedAt || b.completedAt || b.createdAt) - new Date(a.archivedAt || a.completedAt || a.createdAt));
   return `
-    <div class="view-header">
-      <div>
-        <h2>Finished &amp; filed.</h2>
-        <p>Completed tasks move here automatically. Restore a task or delete it permanently when you no longer need the record.</p>
-      </div>
-    </div>
     <section class="panel">
       <div class="panel-heading"><h3>Completed tasks</h3></div>
       ${tasks.length ? `<div class="task-list">${tasks.map((task) => taskRow(task, { archive: true })).join("")}</div>` : emptyState("archive", "The archive is empty", "Completed tasks will be stored here.")}
@@ -716,8 +696,10 @@ function openTaskDialog(taskId = null, presetProjectIds = []) {
   taskForm.elements.repeatType.value = task?.recurrence?.type || "none";
   taskForm.elements.repeatInterval.value = task?.recurrence?.interval || 1;
   taskForm.elements.repeatUnit.value = task?.recurrence?.unit || "week";
+  taskForm.elements.repeatEndDate.value = task?.recurrence?.endDate || "";
 
   const selectedProjectIds = task?.projectIds || presetProjectIds;
+  document.querySelector("#task-no-project").checked = selectedProjectIds.length === 0;
   const projectList = document.querySelector("#task-project-list");
   projectList.innerHTML = state.projects.length
     ? state.projects.map((project) => `
@@ -726,7 +708,7 @@ function openTaskDialog(taskId = null, presetProjectIds = []) {
           <span><i class="project-dot" style="background:${escapeHtml(project.color)}"></i>${escapeHtml(project.name)}</span>
         </label>
       `).join("")
-    : '<span class="task-meta">No projects yet. This task will remain uncategorized.</span>';
+    : '<span class="task-meta">You can add a project later.</span>';
 
   const editor = document.querySelector("#subtask-editor");
   editor.innerHTML = "";
@@ -755,6 +737,9 @@ function addSubtaskRow(subtask = {}) {
 
 function updateRepeatFields() {
   const isCustom = taskForm.elements.repeatType.value === "custom";
+  const repeats = taskForm.elements.repeatType.value !== "none";
+  document.querySelector(".repeat-end-field").classList.toggle("is-hidden", !repeats);
+  taskForm.elements.repeatEndDate.disabled = !repeats;
   document.querySelectorAll(".custom-repeat-field").forEach((element) => element.classList.toggle("is-hidden", !isCustom));
   const showWeekdays = isCustom && taskForm.elements.repeatUnit.value === "week";
   document.querySelector("#weekday-picker").classList.toggle("is-hidden", !showWeekdays);
@@ -784,6 +769,12 @@ function submitTask(event) {
     fields.dueDate.focus();
     return;
   }
+  if (fields.repeatType.value !== "none" && fields.repeatEndDate.value
+    && [fields.dueDate.value, fields.blockDate.value].some((date) => date && date > fields.repeatEndDate.value)) {
+    showToast("The repeat end date must be on or after the first deadline and time block.");
+    fields.repeatEndDate.focus();
+    return;
+  }
 
   const existing = ui.editingTaskId ? state.tasks.find((task) => task.id === ui.editingTaskId) : null;
   const projectIds = [...document.querySelectorAll("#task-project-list input:checked")].map((input) => input.value);
@@ -809,6 +800,7 @@ function submitTask(event) {
       interval: Number(fields.repeatInterval.value || 1),
       unit: fields.repeatUnit.value,
       weekdays,
+      endDate: fields.repeatType.value === "none" ? "" : fields.repeatEndDate.value,
     },
     timeBlock: {
       date: fields.blockDate.value,
@@ -836,7 +828,6 @@ function openProjectDialog(projectId = null) {
   document.querySelector("#project-dialog-title").textContent = project ? "Edit project" : "Create project";
   projectForm.elements.name.value = project?.name || "";
   projectForm.elements.description.value = project?.description || "";
-  projectForm.elements.deadline.value = project?.deadline || "";
   projectForm.elements.color.value = project?.color || "#9785b5";
   document.querySelector("#delete-project-button").classList.toggle("is-hidden", !project);
   projectDialog.showModal();
@@ -850,7 +841,6 @@ function submitProject(event) {
     id: existing?.id || makeId("project"),
     name: projectForm.elements.name.value.trim(),
     description: projectForm.elements.description.value.trim(),
-    deadline: projectForm.elements.deadline.value,
     color: projectForm.elements.color.value,
     createdAt: existing?.createdAt || new Date().toISOString(),
   };
@@ -863,7 +853,6 @@ function submitProject(event) {
   ui.selectedProjectId = project.id;
   ui.expandedProjectIds.add(project.id);
   ui.selectedTaskId = null;
-  focusTimeline(project.deadline);
   projectDialog.close();
   saveState(existing ? "Project updated." : "Project created.");
 }
@@ -909,13 +898,18 @@ function deleteTask(id) {
 }
 
 function saveNote(form) {
+  const title = form.elements.noteTitle.value.trim();
   const text = form.elements.noteText.value.trim();
   if (!text) return;
+  const editing = Boolean(ui.editingNoteId);
   state = {
     ...state,
-    notes: [...state.notes, { id: makeId("note"), text, createdAt: new Date().toISOString() }],
+    notes: editing
+      ? state.notes.map((note) => note.id === ui.editingNoteId ? { ...note, title, text } : note)
+      : [...state.notes, { id: makeId("note"), title, text, createdAt: new Date().toISOString() }],
   };
-  saveState("Note saved with the current time.");
+  ui.editingNoteId = null;
+  saveState(editing ? "Note updated." : "Note saved with the current time.");
 }
 
 function exportBackup() {
@@ -936,6 +930,7 @@ async function importBackup(file) {
     const imported = normalizeState(JSON.parse(await file.text()));
     if (!window.confirm(`Import ${imported.projects.length} projects, ${imported.tasks.length} tasks, and ${imported.notes.length} notes? This replaces the data in this browser.`)) return;
     state = imported;
+    ui.editingNoteId = null;
     ui.selectedTaskId = null;
     ui.selectedProjectId = null;
     ui.expandedProjectIds.clear();
@@ -961,6 +956,7 @@ document.querySelector("#nav-list").addEventListener("click", (event) => {
   const button = event.target.closest("[data-view]");
   if (!button) return;
   ui.view = button.dataset.view;
+  ui.editingNoteId = null;
   ui.search = "";
   searchInput.value = "";
   document.body.classList.remove("menu-open");
@@ -979,6 +975,15 @@ document.querySelector("#repeat-type").addEventListener("change", updateRepeatFi
 document.querySelector("#repeat-unit").addEventListener("change", updateRepeatFields);
 document.querySelector("#delete-project-button").addEventListener("click", deleteProject);
 taskForm.addEventListener("submit", submitTask);
+taskForm.addEventListener("change", (event) => {
+  const noProject = document.querySelector("#task-no-project");
+  if (event.target === noProject && noProject.checked) {
+    document.querySelectorAll("#task-project-list input").forEach((input) => { input.checked = false; });
+  }
+  if (event.target === noProject || event.target.closest("#task-project-list")) {
+    noProject.checked = !document.querySelector("#task-project-list input:checked");
+  }
+});
 projectForm.addEventListener("submit", submitProject);
 filterForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1084,7 +1089,7 @@ content.addEventListener("click", (event) => {
     ui.selectedTaskId = null;
     if (ui.selectedProjectId) {
       const nearest = activeTasks().sort(compareTasks).find((task) => taskMatchesProject(task, id) && (task.dueDate || task.timeBlock.date));
-      focusTimeline(nearest?.dueDate || nearest?.timeBlock.date || projectById(id)?.deadline);
+      focusTimeline(nearest?.dueDate || nearest?.timeBlock.date);
     }
     render();
     if (action === "toggle-project") {
@@ -1093,10 +1098,20 @@ content.addEventListener("click", (event) => {
     if (ui.selectedProjectId && action === "select-project") revealTimelineSelection();
   }
   if (action === "project-add-task") openTaskDialog(null, [id]);
+  if (action === "edit-note") {
+    ui.editingNoteId = id;
+    render();
+    document.querySelector('#note-form [name="noteTitle"]').focus();
+  }
+  if (action === "cancel-note-edit") {
+    ui.editingNoteId = null;
+    render();
+  }
   if (action === "delete-note") {
     const note = state.notes.find((item) => item.id === id);
     if (note && window.confirm("Delete this note permanently?")) {
       state = { ...state, notes: state.notes.filter((item) => item.id !== id) };
+      if (ui.editingNoteId === id) ui.editingNoteId = null;
       saveState("Note deleted.");
     }
   }

@@ -31,13 +31,13 @@ export function normalizeState(candidate) {
       id: String(project.id || makeId("project")),
       name: String(project.name || "Untitled project"),
       description: String(project.description || ""),
-      deadline: validDateString(project.deadline) ? project.deadline : "",
       color: validColor(project.color) ? project.color : "#4aa8ff",
       createdAt: validTimestamp(project.createdAt) ? project.createdAt : new Date().toISOString(),
     })),
     tasks: tasks.map((task) => normalizeTask(task)),
     notes: notes.map((note) => ({
       id: String(note.id || makeId("note")),
+      title: String(note.title || "").trim(),
       text: String(note.text || ""),
       createdAt: validTimestamp(note.createdAt) ? note.createdAt : new Date().toISOString(),
     })).filter((note) => note.text.trim()),
@@ -77,6 +77,7 @@ export function normalizeTask(task = {}) {
       weekdays: Array.isArray(recurrence.weekdays)
         ? recurrence.weekdays.map(Number).filter((day) => day >= 0 && day <= 6)
         : [],
+      endDate: validDateString(recurrence.endDate) ? recurrence.endDate : "",
     },
     timeBlock: {
       date: validDateString(timeBlock.date) ? timeBlock.date : "",
@@ -142,9 +143,11 @@ export function nextOccurrence(task) {
     ...task,
     id: makeId("task"),
     dueDate: nextDueDate,
+    dueTime: nextDueDate ? task.dueTime : "",
     timeBlock: {
-      ...task.timeBlock,
       date: nextBlockDate,
+      start: nextBlockDate ? task.timeBlock.start : "",
+      end: nextBlockDate ? task.timeBlock.end : "",
     },
     subtasks: task.subtasks.map((subtask) => ({
       ...subtask,
@@ -181,7 +184,7 @@ export function calculateNextDate(baseDate, recurrence) {
         const base = new Date(date);
         const baseWeek = startOfWeek(base);
         let match = null;
-        for (let offset = 1; offset <= 370; offset += 1) {
+        for (let offset = 1; offset <= interval * 7 + 7; offset += 1) {
           const candidate = new Date(base);
           candidate.setDate(candidate.getDate() + offset);
           if (!weekdays.includes(candidate.getDay())) continue;
@@ -197,7 +200,27 @@ export function calculateNextDate(baseDate, recurrence) {
     }
   }
 
-  return toDateInput(date);
+  const next = toDateInput(date);
+  return recurrence.endDate && next > recurrence.endDate ? "" : next;
+}
+
+export function timelineOccurrences(task, from, to) {
+  if (task.completed || task.archived || !validDateString(from) || !validDateString(to) || from > to) return [];
+  const recurrence = task.recurrence || { type: "none" };
+  const repeats = recurrence.type && recurrence.type !== "none";
+  const lastDate = repeats && recurrence.endDate && recurrence.endDate < to ? recurrence.endDate : to;
+  const events = [];
+  for (const [kind, initialDate] of [["block", task.timeBlock?.date], ["due", task.dueDate]]) {
+    let date = initialDate;
+    while (date && date <= lastDate) {
+      if (date >= from) events.push({ kind, date });
+      if (!repeats) break;
+      const next = calculateNextDate(date, recurrence);
+      if (!next || next <= date) break;
+      date = next;
+    }
+  }
+  return events.sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export function archiveCompletedTask(state, taskId, completedAt = new Date().toISOString()) {
